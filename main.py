@@ -1,7 +1,8 @@
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-import aiohttp
+import httpx
 import json
 import os
 
@@ -10,7 +11,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 ARTIST_NAME = os.getenv("ARTIST_NAME")
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL"))
+CHECK_INTERVAL = 30  # minutes
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
@@ -31,11 +32,11 @@ def save_videos():
 # ---------- YOUTUBE HELPER ----------
 async def fetch_views(video_id):
     url = f"https://www.googleapis.com/youtube/v3/videos?part=statistics&id={video_id}&key={YOUTUBE_API_KEY}"
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            data = await resp.json()
-            if data.get("items"):
-                return int(data["items"][0]["statistics"]["viewCount"])
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url)
+        data = resp.json()
+        if data.get("items"):
+            return int(data["items"][0]["statistics"]["viewCount"])
     return None
 
 async def send_milestone_alert(title, views, milestone):
@@ -103,4 +104,3 @@ async def on_ready():
     await tree.sync()
 
 bot.run(DISCORD_TOKEN)
-
