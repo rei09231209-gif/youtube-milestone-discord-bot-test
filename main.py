@@ -10,7 +10,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 ARTIST_NAME = os.getenv("ARTIST_NAME")
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 30))  # default 30 minutes
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL")) 
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
