@@ -1,0 +1,7 @@
+import os
+
+DISCORD_TOKEN = os.getenv("MTQ1NDM1ODM1ODI0MDAwMjIyNw.GbQJlz.124R_Wyhdbq3Fh2GRfNqy3q5iaS4jT4C_8KXas")
+CHANNEL_ID = int(os.getenv("1454361793492418591"))
+YOUTUBE_API_KEY = os.getenv("AIzaSyDyHzy5aYd0y9zvRZynm_dUn_QlyLjN33M")
+ARTIST_NAME = os.getenv("ENHYPEN")
+CHECK_INTERVAL = 5
