@@ -1,4 +1,3 @@
-
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -11,22 +10,26 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 ARTIST_NAME = os.getenv("ARTIST_NAME")
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL"))
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 30))  # default 30 minutes
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="/", intents=intents)
 tree = bot.tree
 
 # ---------- DATA FILES ----------
-with open("videos.json", "r") as f:
+VIDEO_FILE = "videos.json"
+if not os.path.exists(VIDEO_FILE):
+    with open(VIDEO_FILE, "w") as f:
+        json.dump([], f)
+
+with open(VIDEO_FILE, "r") as f:
     videos = json.load(f)
 
 # ---------- MILESTONES ----------
-# Automatically generate milestones from 1M to 1000M
 milestones = [i * 1_000_000 for i in range(1, 1001)]
 
 def save_videos():
-    with open("videos.json", "w") as f:
+    with open(VIDEO_FILE, "w") as f:
         json.dump(videos, f, indent=2)
 
 # ---------- YOUTUBE HELPER ----------
@@ -41,15 +44,16 @@ async def fetch_views(video_id):
 
 async def send_milestone_alert(title, views, milestone):
     channel = bot.get_channel(CHANNEL_ID)
-    embed = discord.Embed(
-        title="🎉 YouTube Milestone Reached!",
-        color=0xff0000
-    )
-    embed.add_field(name="Artist", value=ARTIST_NAME, inline=True)
-    embed.add_field(name="Video", value=title, inline=False)
-    embed.add_field(name="Milestone", value=f"{milestone//1_000_000}M views", inline=True)
-    embed.add_field(name="Current Views", value=f"{views:,}", inline=True)
-    await channel.send(embed=embed)
+    if channel:
+        embed = discord.Embed(
+            title="🎉 YouTube Milestone Reached!",
+            color=0xff0000
+        )
+        embed.add_field(name="Artist", value=ARTIST_NAME, inline=True)
+        embed.add_field(name="Video", value=title, inline=False)
+        embed.add_field(name="Milestone", value=f"{milestone//1_000_000}M views", inline=True)
+        embed.add_field(name="Current Views", value=f"{views:,}", inline=True)
+        await channel.send(embed=embed)
 
 # ---------- MILESTONE CHECK LOOP ----------
 @tasks.loop(minutes=CHECK_INTERVAL)
@@ -58,7 +62,6 @@ async def check_milestones():
         views = await fetch_views(video["videoId"])
         if views is None:
             continue
-        # Find next milestone passed
         milestone = next(
             (m for m in milestones if views >= m > video.get("lastMilestone", 0)),
             None
