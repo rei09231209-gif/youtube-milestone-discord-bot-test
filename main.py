@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
 from discord import app_commands
 import httpx
 import os
@@ -68,37 +68,39 @@ async def run_tracker_for_channel(channel_id):
         diff = views - video["last_views"]
         current_milestone = views // 1_000_000
 
-        # Send view update (no ping for milestone yet)
+        # Normal view update (no ping)
         await channel.send(f"📊 **{video['title']}**\nViews: **{views:,}**\nChange: **+{diff:,}**")
 
-        # Milestone alert (once per 1M)
+        # Milestone alert (1M) only once
         if video.get("milestone_ping") and current_milestone > video["last_milestone"]:
             await channel.send(f"🎉 **{video['title']} reached {current_milestone}M views!**\n{video['milestone_ping']}")
             video["last_milestone"] = current_milestone
 
         video["last_views"] = views
 
-async def wait_until_kst_checkpoint():
-    now = datetime.now(KST)
-    midnight = datetime.combine(now.date(), time(0, 0), tzinfo=KST)
-    noon = datetime.combine(now.date(), time(12, 0), tzinfo=KST)
+# ================= KST SCHEDULING =================
+async def start_kst_tracker():
+    while True:
+        now = datetime.now(KST)
+        midnight = datetime.combine(now.date(), time(0,0), tzinfo=KST)
+        noon = datetime.combine(now.date(), time(12,0), tzinfo=KST)
 
-    if now < midnight:
-        target = midnight
-    elif now < noon:
-        target = noon
-    else:
-        target = midnight + timedelta(days=1)
+        if now < midnight:
+            target = midnight
+        elif now < noon:
+            target = noon
+        else:
+            target = midnight + timedelta(days=1)
 
-    await asyncio.sleep((target - now).total_seconds())
+        wait_seconds = (target - now).total_seconds()
+        print(f"Waiting {wait_seconds/3600:.2f} hours until next tracker run at {target.time()}")
+        await asyncio.sleep(wait_seconds)
 
-@tasks.loop(hours=12)
-async def tracker():
-    for channel_id in tracked_videos:
-        try:
-            await run_tracker_for_channel(channel_id)
-        except:
-            continue
+        for channel_id in tracked_videos:
+            try:
+                await run_tracker_for_channel(channel_id)
+            except Exception as e:
+                print(f"Error running tracker for channel {channel_id}: {e}")
 
 # ================= SLASH COMMANDS =================
 @tree.command(name="addvideo", description="Add a video to tracking")
@@ -122,48 +124,6 @@ async def addvideo(interaction: discord.Interaction, title: str, video_id: str):
 
     await interaction.followup.send(f"✅ Tracking **{title}**\nCurrent views: {views:,}", ephemeral=True)
 
-@tree.command(name="removemilestone", description="Remove milestone alert from a video")
-async def removemilestone(interaction: discord.Interaction, video_id: str):
-    if interaction.channel.id not in tracked_videos:
-        await interaction.response.send_message("No videos tracked.", ephemeral=True)
-        return
-
-    for video in tracked_videos[interaction.channel.id]:
-        if video["video_id"] == video_id:
-            video["milestone_ping"] = None
-            await interaction.response.send_message(f"Milestone alert removed from **{video['title']}**", ephemeral=True)
-            return
-
-    await interaction.response.send_message("Video not found.", ephemeral=True)
-
-@tree.command(name="setmilestone", description="Set a milestone alert for a video")
-async def setmilestone(interaction: discord.Interaction, video_id: str, ping_message: str):
-    if interaction.channel.id not in tracked_videos:
-        await interaction.response.send_message("No videos tracked.", ephemeral=True)
-        return
-
-    for video in tracked_videos[interaction.channel.id]:
-        if video["video_id"] == video_id:
-            video["milestone_ping"] = ping_message
-            await interaction.response.send_message(f"Milestone alert set for **{video['title']}**", ephemeral=True)
-            return
-
-    await interaction.response.send_message("Video not found.", ephemeral=True)
-
-@tree.command(name="listmilestones", description="List videos with milestone alerts")
-async def listmilestones(interaction: discord.Interaction):
-    if interaction.channel.id not in tracked_videos:
-        await interaction.response.send_message("No videos tracked.", ephemeral=True)
-        return
-
-    msg = "\n".join(
-        f"• {v['title']} ({v['video_id']}) → Ping: {v['milestone_ping']}" 
-        for v in tracked_videos[interaction.channel.id] if v.get("milestone_ping")
-    )
-    if not msg:
-        msg = "No milestone alerts set."
-    await interaction.response.send_message(msg, ephemeral=True)
-
 @tree.command(name="removevideo", description="Remove a tracked video")
 async def removevideo(interaction: discord.Interaction, video_id: str):
     if interaction.channel.id not in tracked_videos:
@@ -184,8 +144,43 @@ async def listvideos(interaction: discord.Interaction):
         await interaction.response.send_message("No videos tracked.", ephemeral=True)
         return
 
-    msg = "\n".join(f"• {v['title']} ({v['video_id']}) → last milestone: {v['last_milestone']}M" 
+    msg = "\n".join(f"• {v['title']} ({v['video_id']}) → last milestone: {v['last_milestone']}M"
                     for v in tracked_videos[interaction.channel.id])
+    await interaction.response.send_message(msg, ephemeral=True)
+
+@tree.command(name="setmilestone", description="Set milestone alert for a video")
+async def setmilestone(interaction: discord.Interaction, video_id: str, ping_message: str):
+    if interaction.channel.id not in tracked_videos:
+        await interaction.response.send_message("No videos tracked.", ephemeral=True)
+        return
+    for video in tracked_videos[interaction.channel.id]:
+        if video["video_id"] == video_id:
+            video["milestone_ping"] = ping_message
+            await interaction.response.send_message(f"Milestone alert set for **{video['title']}**", ephemeral=True)
+            return
+    await interaction.response.send_message("Video not found.", ephemeral=True)
+
+@tree.command(name="removemilestone", description="Remove milestone alert from a video")
+async def removemilestone(interaction: discord.Interaction, video_id: str):
+    if interaction.channel.id not in tracked_videos:
+        await interaction.response.send_message("No videos tracked.", ephemeral=True)
+        return
+    for video in tracked_videos[interaction.channel.id]:
+        if video["video_id"] == video_id:
+            video["milestone_ping"] = None
+            await interaction.response.send_message(f"Milestone alert removed from **{video['title']}**", ephemeral=True)
+            return
+    await interaction.response.send_message("Video not found.", ephemeral=True)
+
+@tree.command(name="listmilestones", description="List videos with milestone alerts")
+async def listmilestones(interaction: discord.Interaction):
+    if interaction.channel.id not in tracked_videos:
+        await interaction.response.send_message("No videos tracked.", ephemeral=True)
+        return
+    msg = "\n".join(f"• {v['title']} ({v['video_id']}) → Ping: {v['milestone_ping']}" 
+                    for v in tracked_videos[interaction.channel.id] if v.get("milestone_ping"))
+    if not msg:
+        msg = "No milestone alerts set."
     await interaction.response.send_message(msg, ephemeral=True)
 
 @tree.command(name="views", description="Get current views of a video")
@@ -197,7 +192,7 @@ async def views(interaction: discord.Interaction, video_id: str):
         return
     await interaction.followup.send(f"👁️ Views: **{views_count:,}**", ephemeral=True)
 
-@tree.command(name="forcecheck", description="Manually trigger tracker")
+@tree.command(name="forcecheck", description="Manually trigger tracker for this channel")
 async def forcecheck(interaction: discord.Interaction):
     await interaction.response.send_message("⏳ Running tracker...", ephemeral=True)
     await run_tracker_for_channel(interaction.channel.id)
@@ -208,8 +203,6 @@ async def forcecheck(interaction: discord.Interaction):
 async def on_ready():
     print(f"Logged in as {bot.user}")
     await tree.sync()
-    asyncio.create_task(wait_until_kst_checkpoint())
-    if not tracker.is_running():
-        tracker.start()
+    asyncio.create_task(start_kst_tracker())
 
 bot.run(DISCORD_TOKEN)
