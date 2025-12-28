@@ -1,109 +1,143 @@
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
+from discord import app_commands
 import httpx
 import json
 import os
+import asyncio
+from datetime import datetime, time, timedelta
+import pytz
 
-# ---------- CONFIG ----------
+# ================= ENV =================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
-ARTIST_NAME = os.getenv("ARTIST_NAME")
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL")) 
+
+KST = pytz.timezone("Asia/Seoul")
 
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="/", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-# ---------- DATA FILES ----------
-VIDEO_FILE = "videos.json"
-if not os.path.exists(VIDEO_FILE):
-    with open(VIDEO_FILE, "w") as f:
+# ================= STORAGE =================
+DATA_FILE = "tracked_videos.json"
+
+if not os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "w") as f:
         json.dump([], f)
 
-with open(VIDEO_FILE, "r") as f:
-    videos = json.load(f)
+with open(DATA_FILE, "r") as f:
+    tracked = json.load(f)
 
-# ---------- MILESTONES ----------
-milestones = [i * 1_000_000 for i in range(1, 1001)]
+def save():
+    with open(DATA_FILE, "w") as f:
+        json.dump(tracked, f, indent=2)
 
-def save_videos():
-    with open(VIDEO_FILE, "w") as f:
-        json.dump(videos, f, indent=2)
-
-# ---------- YOUTUBE HELPER ----------
-async def fetch_views(video_id):
-    url = f"https://www.googleapis.com/youtube/v3/videos?part=statistics&id={video_id}&key={YOUTUBE_API_KEY}"
+# ================= YOUTUBE =================
+async def get_views(video_id: str):
+    url = (
+        "https://www.googleapis.com/youtube/v3/videos"
+        f"?part=statistics&id={video_id}&key={YOUTUBE_API_KEY}"
+    )
     async with httpx.AsyncClient() as client:
-        resp = await client.get(url)
-        data = resp.json()
+        r = await client.get(url)
+        data = r.json()
         if data.get("items"):
             return int(data["items"][0]["statistics"]["viewCount"])
     return None
 
-async def send_milestone_alert(title, views, milestone):
-    channel = bot.get_channel(CHANNEL_ID)
-    if channel:
-        embed = discord.Embed(
-            title="🎉 YouTube Milestone Reached!",
-            color=0xff0000
-        )
-        embed.add_field(name="Artist", value=ARTIST_NAME, inline=True)
-        embed.add_field(name="Video", value=title, inline=False)
-        embed.add_field(name="Milestone", value=f"{milestone//1_000_000}M views", inline=True)
-        embed.add_field(name="Current Views", value=f"{views:,}", inline=True)
-        await channel.send(embed=embed)
+# ================= KST SCHEDULER =================
+async def wait_until_next_kst_checkpoint():
+    now = datetime.now(KST)
 
-# ---------- MILESTONE CHECK LOOP ----------
-@tasks.loop(minutes=CHECK_INTERVAL)
-async def check_milestones():
-    for video in videos:
-        views = await fetch_views(video["videoId"])
+    today_midnight = datetime.combine(now.date(), time(0, 0), tzinfo=KST)
+    today_noon = datetime.combine(now.date(), time(12, 0), tzinfo=KST)
+
+    if now < today_midnight:
+        target = today_midnight
+    elif now < today_noon:
+        target = today_noon
+    else:
+        target = today_midnight + timedelta(days=1)
+
+    sleep_seconds = (target - now).total_seconds()
+    await asyncio.sleep(sleep_seconds)
+
+@tasks.loop(hours=12)
+async def tracker():
+    for item in tracked:
+        views = await get_views(item["video_id"])
         if views is None:
             continue
-        milestone = next(
-            (m for m in milestones if views >= m > video.get("lastMilestone", 0)),
-            None
+
+        channel = bot.get_channel(item["channel_id"])
+        if not channel:
+            continue
+
+        diff = views - item["last_views"]
+        item["last_views"] = views
+        save()
+
+        await channel.send(
+            f"📊 **{item['title']}**\n"
+            f"Views: **{views:,}**\n"
+            f"Change since last check: **+{diff:,}**"
         )
-        if milestone:
-            await send_milestone_alert(video["title"], views, milestone)
-            video["lastMilestone"] = milestone
-            save_videos()
 
-# ---------- SLASH COMMANDS ----------
-@tree.command(name="addvideo", description="Add a YouTube video to track")
-async def addvideo(interaction: discord.Interaction, title: str, videoid: str):
-    if any(v["videoId"] == videoid for v in videos):
-        await interaction.response.send_message("⚠️ Video already tracked.", ephemeral=True)
+# ================= SLASH COMMANDS =================
+@tree.command(name="addvideo", description="Track a YouTube video in this channel")
+async def addvideo(interaction: discord.Interaction, title: str, video_id: str):
+    views = await get_views(video_id)
+    if views is None:
+        await interaction.response.send_message("❌ Invalid video ID", ephemeral=True)
         return
-    videos.append({"title": title, "videoId": videoid, "lastMilestone": 0})
-    save_videos()
-    await interaction.response.send_message(f"✅ **{title}** added for milestone tracking.")
 
-@tree.command(name="removevideo", description="Remove a video from tracking")
-async def removevideo(interaction: discord.Interaction, videoid: str):
-    for v in videos:
-        if v["videoId"] == videoid:
-            videos.remove(v)
-            save_videos()
-            await interaction.response.send_message(f"❌ Removed **{v['title']}**.")
+    tracked.append({
+        "title": title,
+        "video_id": video_id,
+        "channel_id": interaction.channel_id,
+        "last_views": views
+    })
+    save()
+
+    await interaction.response.send_message(
+        f"✅ Tracking **{title}**\nCurrent views: {views:,}"
+    )
+
+@tree.command(name="removevideo", description="Stop tracking a video in this channel")
+async def removevideo(interaction: discord.Interaction, video_id: str):
+    for item in tracked:
+        if item["video_id"] == video_id and item["channel_id"] == interaction.channel_id:
+            tracked.remove(item)
+            save()
+            await interaction.response.send_message("🗑️ Video removed")
             return
-    await interaction.response.send_message("⚠️ Video not found.", ephemeral=True)
 
-@tree.command(name="listvideos", description="List all tracked videos")
+    await interaction.response.send_message("⚠️ Video not found", ephemeral=True)
+
+@tree.command(name="listvideos", description="List tracked videos in this channel")
 async def listvideos(interaction: discord.Interaction):
-    if not videos:
-        await interaction.response.send_message("No videos tracked.", ephemeral=True)
-        return
-    msg = "\n".join([f"• {v['title']} ({v['videoId']})" for v in videos])
-    await interaction.response.send_message(msg, ephemeral=True)
+    vids = [
+        f"• {v['title']} ({v['video_id']})"
+        for v in tracked
+        if v["channel_id"] == interaction.channel_id
+    ]
 
-# ---------- READY EVENT ----------
+    if not vids:
+        await interaction.response.send_message("No tracked videos", ephemeral=True)
+        return
+
+    await interaction.response.send_message("\n".join(vids), ephemeral=True)
+
+# ================= READY =================
 @bot.event
 async def on_ready():
-    print(f"Bot logged in as {bot.user}")
-    check_milestones.start()
+    print(f"Logged in as {bot.user}")
     await tree.sync()
+
+    # Align to next KST checkpoint before starting loop
+    await wait_until_next_kst_checkpoint()
+
+    if not tracker.is_running():
+        tracker.start()
 
 bot.run(DISCORD_TOKEN)
