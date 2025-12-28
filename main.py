@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, time, timedelta
 import pytz
 import asyncio
+import json
 
 # ================= KEEP-ALIVE WEB SERVER =================
 def run_web():
@@ -26,6 +27,7 @@ threading.Thread(target=run_web, daemon=True).start()
 # ================= ENV =================
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+DATA_FILE = "tracked_videos.json"
 
 KST = pytz.timezone("Asia/Seoul")
 
@@ -35,8 +37,11 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
-PIN_HEADER = "YT_TRACK_DATA"
-
+# Load or initialize JSON storage
+if not os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "w") as f:
+        json.dump({}, f)
+        
 # ================= YOUTUBE API =================
 async def get_views(video_id):
     url = f"https://www.googleapis.com/youtube/v3/videos?part=statistics&id={video_id}&key={YOUTUBE_API_KEY}"
@@ -46,73 +51,52 @@ async def get_views(video_id):
         if data.get("items"):
             return int(data["items"][0]["statistics"]["viewCount"])
     return None
-    
-# ================= PIN STORAGE =================
-async def get_pin(channel):
-    pins = await channel.pins()
-    for p in pins:
-        if p.content.startswith(PIN_HEADER):
-            return p
-    # Create pin with header + newline
-    msg = await channel.send(f"{PIN_HEADER}\n")
-    await msg.pin()
-    return msg
 
-def parse_pin(content):
-    videos = []
-    lines = content.split("\n")[1:]  # skip header
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            title, vid, last, milestone, ping = line.split("|")
-            videos.append({
-                "title": title,
-                "video_id": vid,
-                "last_views": int(last),
-                "last_milestone": int(milestone),
-                "ping": ping
-            })
-        except ValueError:
-            continue
-    return videos
+# ================= JSON STORAGE =================
+def load_data():
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
 
-def build_pin(videos):
-    lines = [PIN_HEADER]
-    for v in videos:
-        lines.append(f"{v['title']}|{v['video_id']}|{v['last_views']}|{v['last_milestone']}|{v['ping']}")
-    return "\n".join(lines)
-    
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+        
 # ================= TRACKER =================
-async def run_tracker_for_channel(channel):
-    pin = await get_pin(channel)
-    videos = parse_pin(pin.content)
-    if not videos:
+async def run_tracker_for_channel(channel_id):
+    data = load_data()
+    if str(channel_id) not in data:
         return
 
+    channel_data = data[str(channel_id)]
     updated = False
-    for v in videos:
-        views = await get_views(v["video_id"])
+
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        return
+
+    for video in channel_data:
+        views = await get_views(video["video_id"])
         if views is None:
             continue
 
-        diff = views - v["last_views"]
+        diff = views - video["last_views"]
         current_milestone = views // 1_000_000
 
-        # View update
-        await channel.send(f"📊 **{v['title']}**\nViews: **{views:,}**\nChange: **+{diff:,}**")
+        # Send view update
+        await channel.send(f"📊 **{video['title']}**\nViews: **{views:,}**\nChange: **+{diff:,}**")
 
-        # Milestone alert (once per 1M)
-        if current_milestone > v["last_milestone"]:
-            await channel.send(f"🎉 **{v['title']} reached {current_milestone}M views!**\n{v['ping']}")
-            v["last_milestone"] = current_milestone
+        # Milestone alert (1M views)
+        if current_milestone > video["last_milestone"]:
+            await channel.send(f"🎉 **{video['title']} reached {current_milestone}M views!**\n{video['ping']}")
+            video["last_milestone"] = current_milestone
 
-        v["last_views"] = views
+        video["last_views"] = views
         updated = True
 
     if updated:
-        await pin.edit(content=build_pin(videos))
+        save_data(data)
 
+# ================= KST SCHEDULING =================
 async def wait_until_kst_checkpoint():
     now = datetime.now(KST)
     midnight = datetime.combine(now.date(), time(0, 0), tzinfo=KST)
@@ -129,81 +113,95 @@ async def wait_until_kst_checkpoint():
 
 @tasks.loop(hours=12)
 async def tracker():
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
-            try:
-                await run_tracker_for_channel(channel)
-            except:
-                continue
-                
+    data = load_data()
+    for channel_id_str in data:
+        channel_id = int(channel_id_str)
+        try:
+            await run_tracker_for_channel(channel_id)
+        except:
+            continue
+
 # ================= SLASH COMMANDS =================
 @tree.command(name="addvideo", description="Add a video to tracking (with custom ping)")
 async def addvideo(interaction: discord.Interaction, title: str, video_id: str, ping_message: str = " "):
     await interaction.response.send_message("⏳ Adding video...", ephemeral=True)
 
-    views = await get_views(video_id)
-    if views is None:
-        await interaction.followup.send("❌ Invalid video ID", ephemeral=True)
-        return
+    async def process():
+        views = await get_views(video_id)
+        if views is None:
+            await interaction.followup.send("❌ Invalid video ID", ephemeral=True)
+            return
 
-    pin = await get_pin(interaction.channel)
-    videos = parse_pin(pin.content)
+        data = load_data()
+        channel_id_str = str(interaction.channel.id)
+        if channel_id_str not in data:
+            data[channel_id_str] = []
 
-    videos.append({
-        "title": title,
-        "video_id": video_id,
-        "last_views": views,
-        "last_milestone": views // 1_000_000,
-        "ping": ping_message
-    })
+        data[channel_id_str].append({
+            "title": title,
+            "video_id": video_id,
+            "last_views": views,
+            "last_milestone": views // 1_000_000,
+            "ping": ping_message
+        })
+        save_data(data)
+        await interaction.followup.send(f"✅ Tracking **{title}**\nCurrent views: {views:,}\nPing message: `{ping_message}`", ephemeral=True)
 
-    await pin.edit(content=build_pin(videos))
-    await interaction.followup.send(f"✅ Tracking **{title}**\nCurrent views: {views:,}\nPing message: `{ping_message}`", ephemeral=True)
+    asyncio.create_task(process())
 
 @tree.command(name="removevideo", description="Remove a tracked video")
 async def removevideo(interaction: discord.Interaction, video_id: str):
-    pin = await get_pin(interaction.channel)
-    videos = parse_pin(pin.content)
-    new_videos = [v for v in videos if v["video_id"] != video_id]
-
-    if len(new_videos) == len(videos):
-        await interaction.response.send_message("Video not found", ephemeral=True)
+    data = load_data()
+    channel_id_str = str(interaction.channel.id)
+    if channel_id_str not in data:
+        await interaction.response.send_message("No videos tracked in this channel.", ephemeral=True)
         return
 
-    await pin.edit(content=build_pin(new_videos))
-    await interaction.response.send_message("🗑️ Video removed", ephemeral=True)
+    new_list = [v for v in data[channel_id_str] if v["video_id"] != video_id]
+    if len(new_list) == len(data[channel_id_str]):
+        await interaction.response.send_message("Video not found.", ephemeral=True)
+        return
+
+    data[channel_id_str] = new_list
+    save_data(data)
+    await interaction.response.send_message("🗑️ Video removed.", ephemeral=True)
 
 @tree.command(name="listvideos", description="List tracked videos")
 async def listvideos(interaction: discord.Interaction):
-    pin = await get_pin(interaction.channel)
-    videos = parse_pin(pin.content)
-    if not videos:
-        await interaction.response.send_message("No videos tracked", ephemeral=True)
+    data = load_data()
+    channel_id_str = str(interaction.channel.id)
+    if channel_id_str not in data or not data[channel_id_str]:
+        await interaction.response.send_message("No videos tracked in this channel.", ephemeral=True)
         return
-    msg = "\n".join(f"• {v['title']} ({v['video_id']}) → last milestone: {v['last_milestone']}M" for v in videos)
+
+    msg = "\n".join(f"• {v['title']} ({v['video_id']}) → last milestone: {v['last_milestone']}M" for v in data[channel_id_str])
     await interaction.response.send_message(msg, ephemeral=True)
 
 @tree.command(name="views", description="Get current views of a video")
 async def views(interaction: discord.Interaction, video_id: str):
-    v = await get_views(video_id)
-    if v is None:
-        await interaction.response.send_message("Invalid video ID", ephemeral=True)
+    await interaction.response.send_message("⏳ Fetching views...", ephemeral=True)
+    views_count = await get_views(video_id)
+    if views_count is None:
+        await interaction.followup.send("❌ Invalid video ID.", ephemeral=True)
         return
-    await interaction.response.send_message(f"👁️ Views: **{v:,}**", ephemeral=True)
+    await interaction.followup.send(f"👁️ Views: **{views_count:,}**", ephemeral=True)
 
 @tree.command(name="forcecheck", description="Manually trigger the tracker for this channel")
 async def forcecheck(interaction: discord.Interaction):
     await interaction.response.send_message("⏳ Running tracker...", ephemeral=True)
-    await run_tracker_for_channel(interaction.channel)
-    await interaction.followup.send("✅ Tracker run completed for this channel", ephemeral=True)
+    await run_tracker_for_channel(interaction.channel.id)
+    await interaction.followup.send("✅ Tracker run completed for this channel.", ephemeral=True)
 
 # ================= READY =================
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user}")
     await tree.sync()
-    await wait_until_kst_checkpoint()
+    # Wait until next KST checkpoint
+    asyncio.create_task(wait_until_kst_checkpoint())
+    # Start tracker loop if not running
     if not tracker.is_running():
         tracker.start()
 
 bot.run(DISCORD_TOKEN)
+    
