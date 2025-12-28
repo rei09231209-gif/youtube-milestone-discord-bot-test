@@ -46,14 +46,14 @@ async def get_views(video_id):
         if data.get("items"):
             return int(data["items"][0]["statistics"]["viewCount"])
     return None
-
+    
 # ================= PIN STORAGE =================
 async def get_pin(channel):
     pins = await channel.pins()
     for p in pins:
         if p.content.startswith(PIN_HEADER):
             return p
-    # Create pin with header + newline for proper parsing
+    # Create pin with header + newline
     msg = await channel.send(f"{PIN_HEADER}\n")
     await msg.pin()
     return msg
@@ -82,7 +82,7 @@ def build_pin(videos):
     for v in videos:
         lines.append(f"{v['title']}|{v['video_id']}|{v['last_views']}|{v['last_milestone']}|{v['ping']}")
     return "\n".join(lines)
-
+    
 # ================= TRACKER =================
 async def run_tracker_for_channel(channel):
     pin = await get_pin(channel)
@@ -135,13 +135,15 @@ async def tracker():
                 await run_tracker_for_channel(channel)
             except:
                 continue
-
+                
 # ================= SLASH COMMANDS =================
 @tree.command(name="addvideo", description="Add a video to tracking (with custom ping)")
 async def addvideo(interaction: discord.Interaction, title: str, video_id: str, ping_message: str = " "):
+    await interaction.response.send_message("⏳ Adding video...", ephemeral=True)
+
     views = await get_views(video_id)
     if views is None:
-        await interaction.response.send_message("Invalid video ID", ephemeral=True)
+        await interaction.followup.send("❌ Invalid video ID", ephemeral=True)
         return
 
     pin = await get_pin(interaction.channel)
@@ -156,7 +158,7 @@ async def addvideo(interaction: discord.Interaction, title: str, video_id: str, 
     })
 
     await pin.edit(content=build_pin(videos))
-    await interaction.response.send_message(f"✅ Tracking **{title}**\nCurrent views: {views:,}\nPing message: `{ping_message}`")
+    await interaction.followup.send(f"✅ Tracking **{title}**\nCurrent views: {views:,}\nPing message: `{ping_message}`", ephemeral=True)
 
 @tree.command(name="removevideo", description="Remove a tracked video")
 async def removevideo(interaction: discord.Interaction, video_id: str):
@@ -169,7 +171,7 @@ async def removevideo(interaction: discord.Interaction, video_id: str):
         return
 
     await pin.edit(content=build_pin(new_videos))
-    await interaction.response.send_message("🗑️ Video removed")
+    await interaction.response.send_message("🗑️ Video removed", ephemeral=True)
 
 @tree.command(name="listvideos", description="List tracked videos")
 async def listvideos(interaction: discord.Interaction):
@@ -187,12 +189,13 @@ async def views(interaction: discord.Interaction, video_id: str):
     if v is None:
         await interaction.response.send_message("Invalid video ID", ephemeral=True)
         return
-    await interaction.response.send_message(f"👁️ Views: **{v:,}**")
+    await interaction.response.send_message(f"👁️ Views: **{v:,}**", ephemeral=True)
 
 @tree.command(name="forcecheck", description="Manually trigger the tracker for this channel")
 async def forcecheck(interaction: discord.Interaction):
+    await interaction.response.send_message("⏳ Running tracker...", ephemeral=True)
     await run_tracker_for_channel(interaction.channel)
-    await interaction.response.send_message("✅ Tracker run completed for this channel")
+    await interaction.followup.send("✅ Tracker run completed for this channel", ephemeral=True)
 
 # ================= READY =================
 @bot.event
