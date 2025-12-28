@@ -10,7 +10,7 @@ from datetime import datetime, time, timedelta
 import pytz
 import asyncio
 
-# ====================== TINY WEB SERVER (for Render Web Service) ======================
+# ====================== TINY WEB SERVER (KEEP-ALIVE) ======================
 def run_web():
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -32,7 +32,7 @@ KST = pytz.timezone("Asia/Seoul")
 
 # ====================== INTENTS ======================
 intents = discord.Intents.default()
-intents.message_content = True  # privileged intent enabled
+intents.message_content = True  # Privileged intent enabled
 bot = commands.Bot(command_prefix="!", intents=intents)
 tree = bot.tree
 
