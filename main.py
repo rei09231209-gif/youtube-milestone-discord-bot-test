@@ -53,14 +53,17 @@ async def get_pin(channel):
     for p in pins:
         if p.content.startswith(PIN_HEADER):
             return p
-    msg = await channel.send(PIN_HEADER)
+    # Create pin with header + newline for proper parsing
+    msg = await channel.send(f"{PIN_HEADER}\n")
     await msg.pin()
     return msg
 
 def parse_pin(content):
     videos = []
-    lines = content.split("\n")[1:]
+    lines = content.split("\n")[1:]  # skip header
     for line in lines:
+        if not line.strip():
+            continue
         try:
             title, vid, last, milestone, ping = line.split("|")
             videos.append({
@@ -70,8 +73,8 @@ def parse_pin(content):
                 "last_milestone": int(milestone),
                 "ping": ping
             })
-        except:
-            pass
+        except ValueError:
+            continue
     return videos
 
 def build_pin(videos):
@@ -80,7 +83,7 @@ def build_pin(videos):
         lines.append(f"{v['title']}|{v['video_id']}|{v['last_views']}|{v['last_milestone']}|{v['ping']}")
     return "\n".join(lines)
 
-# ================= TRACKER LOGIC =================
+# ================= TRACKER =================
 async def run_tracker_for_channel(channel):
     pin = await get_pin(channel)
     videos = parse_pin(pin.content)
@@ -99,7 +102,7 @@ async def run_tracker_for_channel(channel):
         # View update
         await channel.send(f"📊 **{v['title']}**\nViews: **{views:,}**\nChange: **+{diff:,}**")
 
-        # Milestone alert
+        # Milestone alert (once per 1M)
         if current_milestone > v["last_milestone"]:
             await channel.send(f"🎉 **{v['title']} reached {current_milestone}M views!**\n{v['ping']}")
             v["last_milestone"] = current_milestone
