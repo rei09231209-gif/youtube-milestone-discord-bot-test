@@ -121,7 +121,6 @@ async def scheduler_clock():
             DATA["last_run"]["PM"] = today_str
             save_data()
 
-        # sleep 5 minutes
         await asyncio.sleep(CHECK_INTERVAL)
 
 # =======================
@@ -144,6 +143,7 @@ async def addvideo(interaction: discord.Interaction, video_id: str, title: str):
     DATA["videos"][video_id] = {
         "title": title,
         "channel_id": interaction.channel_id,
+        "guild_id": interaction.guild_id,
         "last_views": 0,
         "last_milestone": 0,
         "milestone_ping": None
@@ -236,7 +236,7 @@ async def disableinterval(interaction: discord.Interaction):
         "🛑 Custom interval disabled (12-hour clock tracking still active)",
         ephemeral=True
     )
-        
+
 # =======================
 # NEW COMMAND: /views
 # =======================
@@ -263,25 +263,56 @@ async def views(interaction: discord.Interaction, video_id: str):
     )
 
 # =======================
-# UPDATED /forcecheck (reports views)
+# UPDATED FORCECHECK: per-channel
 # =======================
-@bot.tree.command(name="forcecheck", description="Run tracker now and show views")
+@bot.tree.command(name="forcecheck", description="Run tracker now for this channel")
 async def forcecheck(interaction: discord.Interaction):
     messages = []
     for vid, info in DATA["videos"].items():
-        current_views = fetch_views(vid)
-        if current_views is None:
+        if info.get("channel_id") != interaction.channel_id:
             continue
-        info["last_views"] = current_views
-        messages.append(f"**{info['title']}** → {current_views:,} views")
+        views = fetch_views(vid)
+        if views is None:
+            messages.append(f"⚠ {info['title']} → could not fetch views")
+        else:
+            info["last_views"] = views
+            messages.append(f"**{info['title']}** → {views:,} views")
     save_data()
 
     if messages:
-        await interaction.response.send_message(
-            "🔁 Force check done:\n" + "\n".join(messages)
-        )
+        CHUNK_SIZE = 2000
+        msg = "\n".join(messages)
+        for i in range(0, len(msg), CHUNK_SIZE):
+            await interaction.channel.send(msg[i:i+CHUNK_SIZE])
+        await interaction.response.send_message("🔁 Force check done for this channel!", ephemeral=True)
     else:
-        await interaction.response.send_message("🔁 Force check done, no data fetched")
+        await interaction.response.send_message("No videos tracked in this channel.", ephemeral=True)
+
+# =======================
+# VIEWSALL: server-wide
+# =======================
+@bot.tree.command(name="viewsall", description="Show current views for all tracked videos in this server")
+async def viewsall(interaction: discord.Interaction):
+    messages = []
+    for vid, info in DATA["videos"].items():
+        if info.get("guild_id") != interaction.guild_id:
+            continue
+        views = fetch_views(vid)
+        if views is None:
+            messages.append(f"⚠ {info['title']} → could not fetch views")
+        else:
+            info["last_views"] = views
+            messages.append(f"**{info['title']}** → {views:,} views")
+    save_data()
+
+    if messages:
+        CHUNK_SIZE = 2000
+        msg = "\n".join(messages)
+        for i in range(0, len(msg), CHUNK_SIZE):
+            await interaction.channel.send(msg[i:i+CHUNK_SIZE])
+        await interaction.response.send_message("📊 Server-wide views updated!", ephemeral=True)
+    else:
+        await interaction.response.send_message("No videos tracked in this server.", ephemeral=True)
 
 # =======================
 # KEEP ALIVE SERVER
