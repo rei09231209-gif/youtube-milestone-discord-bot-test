@@ -236,7 +236,32 @@ async def disableinterval(interaction: discord.Interaction):
         "🛑 Custom interval disabled (12-hour clock tracking still active)",
         ephemeral=True
     )
+    
+@bot.tree.command(name="viewsall", description="Show current views for all tracked videos")
+async def viewsall(interaction: discord.Interaction):
+    messages = []
+    for vid, info in DATA["videos"].items():
+        # Only include videos posted in this channel's server
+        if info["channel_id"] != interaction.channel_id:
+            continue
+        current_views = fetch_views(vid)
+        if current_views is None:
+            messages.append(f"⚠ {info['title']} → could not fetch views")
+        else:
+            info["last_views"] = current_views
+            messages.append(f"**{info['title']}** → {current_views:,} views")
+    save_data()
 
+    if messages:
+        # Discord messages have a max length, so split if needed
+        CHUNK_SIZE = 2000
+        msg = "\n".join(messages)
+        for i in range(0, len(msg), CHUNK_SIZE):
+            await interaction.channel.send(msg[i:i+CHUNK_SIZE])
+        await interaction.response.send_message("📊 All views updated!", ephemeral=True)
+    else:
+        await interaction.response.send_message("No videos tracked for this server.", ephemeral=True)
+        
 # =======================
 # NEW COMMAND: /views
 # =======================
