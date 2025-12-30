@@ -237,13 +237,51 @@ async def disableinterval(interaction: discord.Interaction):
         ephemeral=True
     )
 
-@bot.tree.command(name="forcecheck", description="Run tracker now")
-async def forcecheck(interaction: discord.Interaction):
-    await run_tracker()
+# =======================
+# NEW COMMAND: /views
+# =======================
+@bot.tree.command(name="views", description="Get current views for a video")
+async def views(interaction: discord.Interaction, video_id: str):
+    if video_id not in DATA["videos"]:
+        await interaction.response.send_message(
+            "❌ Video not found",
+            ephemeral=True
+        )
+        return
+
+    current_views = fetch_views(video_id)
+    if current_views is None:
+        await interaction.response.send_message(
+            "⚠ Could not fetch views right now",
+            ephemeral=True
+        )
+        return
+
     await interaction.response.send_message(
-        "🔁 Force check completed",
-        ephemeral=True
+        f"👀 **{DATA['videos'][video_id]['title']}** has **{current_views:,} views**",
+        ephemeral=False
     )
+
+# =======================
+# UPDATED /forcecheck (reports views)
+# =======================
+@bot.tree.command(name="forcecheck", description="Run tracker now and show views")
+async def forcecheck(interaction: discord.Interaction):
+    messages = []
+    for vid, info in DATA["videos"].items():
+        current_views = fetch_views(vid)
+        if current_views is None:
+            continue
+        info["last_views"] = current_views
+        messages.append(f"**{info['title']}** → {current_views:,} views")
+    save_data()
+
+    if messages:
+        await interaction.response.send_message(
+            "🔁 Force check done:\n" + "\n".join(messages)
+        )
+    else:
+        await interaction.response.send_message("🔁 Force check done, no data fetched")
 
 # =======================
 # KEEP ALIVE SERVER
