@@ -224,13 +224,23 @@ async def views(interaction: discord.Interaction, video_id: str):
 async def forcecheck(interaction: discord.Interaction):
     vids = videos_for_channel(interaction.channel_id)
     if not vids:
-        await interaction.response.send_message("❌ No videos here", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ No videos tracked in this channel.",
+            ephemeral=True
+        )
         return
 
     await interaction.response.defer()
+
     for vid, info in vids.items():
         await track_video(vid, info, interaction.channel)
+
     save_data()
+
+    await interaction.followup.send(
+        "✅ Force check completed for this channel.",
+        ephemeral=True
+    )
 
 @bot.tree.command(name="viewsall")
 async def viewsall(interaction: discord.Interaction):
