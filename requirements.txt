@@ -1,4 +1,4 @@
 discord.py
-httpx
-pytz
+flask
 requests
+python-dotenv
