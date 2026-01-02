@@ -679,7 +679,7 @@ async def run_tracking_cycle(tag: str):
         c.execute(
             'UPDATE videos SET last_views=?, last_checked=? WHERE video_id=?',
             (current_views, int(time.time()), video_id
-        )
+            )
         conn.commit()
 
         await check_milestones(video_id, current_views, channel)
