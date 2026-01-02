@@ -681,9 +681,10 @@ async def run_tracking_cycle(tag: str):
             (current_views, int(time.time()), video_id
             )
         conn.commit()
-
+        )
+        
         await check_milestones(video_id, current_views, channel)
-
+        
     # after all videos → upcoming milestone summary
     await upcoming_milestone_summary(tag)
 
