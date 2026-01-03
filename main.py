@@ -783,5 +783,6 @@ def keep_alive():
 keep_alive()
 
 # Finally run the bot
-bot.run(YOUR_BOT_TOKEN) 
-#RAHHHHH JEBALLL
+BOT_TOKEN = os.getenv("YOUR_BOT_TOKEN")  # Set in Render environment variables
+bot.run(BOT_TOKEN)
+#RAHHHHH JEBALLL 109
