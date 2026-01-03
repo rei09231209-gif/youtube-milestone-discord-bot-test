@@ -1,4 +1,5 @@
 discord.py
-flask
 requests
-python-dotenv
+pytz
+aiohttp
+flask
