@@ -782,7 +782,8 @@ def keep_alive():
 # START keep-alive
 keep_alive()
 
-# Finally run the bot
-BOT_TOKEN = os.getenv("YOUR_BOT_TOKEN")  # Set in Render environment variables
+BOT_TOKEN = os.getenv("YOUR_BOT_TOKEN")  # This now must return your token as string
+if not BOT_TOKEN:
+    raise ValueError("Bot token not found! Please set YOUR_BOT_TOKEN in environment variables.")
+
 bot.run(BOT_TOKEN)
-#RAHHHHH JEBALLL 109
