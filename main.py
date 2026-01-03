@@ -4,7 +4,7 @@ from discord import app_commands
 import asyncio
 import requests
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Thread
 from flask import Flask
 import os
