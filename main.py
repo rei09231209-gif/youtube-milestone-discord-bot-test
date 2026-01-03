@@ -849,3 +849,7 @@ def keep_alive():
 
 # START keep-alive
 keep_alive()
+
+# Finally run the bot
+bot.run(YOUR_BOT_TOKEN) 
+#RAHHHHH JEBALLL
