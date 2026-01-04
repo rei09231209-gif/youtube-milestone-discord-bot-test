@@ -13,7 +13,6 @@ import pytz
 # ENV
 # ------------------------------------
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 PORT = int(os.getenv("PORT", 8080))
@@ -35,30 +34,30 @@ db = sqlite3.connect("yt_tracker.db", check_same_thread=False)
 c = db.cursor()
 
 c.execute("""CREATE TABLE IF NOT EXISTS videos (
-    video_id TEXT,
-    title TEXT,
-    guild_id INTEGER,
-    channel_id INTEGER,
-    alert_channel INTEGER,
-    PRIMARY KEY(video_id, guild_id)
+video_id TEXT,
+title TEXT,
+guild_id INTEGER,
+channel_id INTEGER,
+alert_channel INTEGER,
+PRIMARY KEY(video_id, guild_id)
 )""")
 
 c.execute("""CREATE TABLE IF NOT EXISTS milestones (
-    video_id TEXT PRIMARY KEY,
-    last_million INTEGER DEFAULT 0,
-    ping TEXT
+video_id TEXT PRIMARY KEY,
+last_million INTEGER DEFAULT 0,
+ping TEXT
 )""")
 
 c.execute("""CREATE TABLE IF NOT EXISTS intervals (
-    video_id TEXT PRIMARY KEY,
-    hours REAL,
-    next_run TEXT
+video_id TEXT PRIMARY KEY,
+hours REAL,
+next_run TEXT
 )""")
 
 c.execute("""CREATE TABLE IF NOT EXISTS upcoming_alerts (
-    guild_id INTEGER PRIMARY KEY,
-    channel_id INTEGER,
-    ping TEXT
+guild_id INTEGER PRIMARY KEY,
+channel_id INTEGER,
+ping TEXT
 )""")
 
 db.commit()
@@ -86,7 +85,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Bot alive"
+    return "Bot alive 🔥"
 
 def run_web():
     app.run(host="0.0.0.0", port=PORT)
@@ -100,7 +99,7 @@ intents = discord.Intents.default()
 bot = discord.Bot(intents=intents)
 
 # ======================================================
-# KST TRACKER LOOP
+# KST TRACKER LOOP (Current views + milestone + upcoming)
 # ======================================================
 @tasks.loop(minutes=1)
 async def kst_tracker():
@@ -108,59 +107,71 @@ async def kst_tracker():
     if now.hour not in TRACK_HOURS or now.minute != 0:
         return
 
-    c.execute("SELECT video_id,title,guild_id,alert_channel FROM videos")
+    c.execute("SELECT video_id, title, guild_id, alert_channel FROM videos")
     videos = c.fetchall()
+
+    upcoming_summary = {}  # guild_id -> list of lines for upcoming milestones
 
     for vid, title, gid, alert_ch in videos:
         views = await fetch_views(vid)
         if views is None:
             continue
 
-        # ----------- AUTO 1M MILESTONE -----------
+        # -----------------------------
+        # 1️⃣ Send current views (main tracker feature)
+        # -----------------------------
+        channel = bot.get_channel(alert_ch)
+        if channel:
+            await channel.send(f"👀 **{title}** currently has **{views:,} views**.")
+
+        # -----------------------------
+        # 2️⃣ Milestone check (secondary)
+        # -----------------------------
         million = views // 1_000_000
-        c.execute("SELECT last_million,ping FROM milestones WHERE video_id=?", (vid,))
+        c.execute("SELECT last_million, ping FROM milestones WHERE video_id=?", (vid,))
         row = c.fetchone()
 
         if row:
             last, ping = row
             if million > last:
-                channel = bot.get_channel(alert_ch)
                 if channel:
                     await channel.send(
-                        f"🎉 **Milestone Reached!**\n"
+                        f"🏆 **Milestone Alert!**\n"
                         f"**{title}** just crossed **{million}M views**!\n"
                         f"{ping or ''}"
                     )
-
-                c.execute(
-                    "UPDATE milestones SET last_million=? WHERE video_id=?",
-                    (million, vid)
-                )
+                c.execute("UPDATE milestones SET last_million=? WHERE video_id=?", (million, vid))
                 db.commit()
 
-        # ----------- UPCOMING MILESTONE (<100k) -----------
+        # -----------------------------
+        # 3️⃣ Upcoming milestone check (<100k)
+        # -----------------------------
         next_m = (million + 1) * 1_000_000
-        if next_m - views <= 100_000:
-            c.execute(
-                "SELECT channel_id,ping FROM upcoming_alerts WHERE guild_id=?",
-                (gid,)
+        diff = next_m - views
+        if diff <= 100_000:
+            upcoming_summary.setdefault(gid, []).append(
+                f"⏳ **{title}** is **{diff:,}** views away from **{next_m:,}**!"
             )
-            row = c.fetchone()
-            if row:
-                ch, ping = row
-                channel = bot.get_channel(ch)
-                if channel:
-                    await channel.send(
-                        f"⏳ **Upcoming Milestone**\n"
-                        f"**{title}** is **{next_m - views:,}** views away from **{next_m:,}**!"
-                    )
 
-    # ----------- SINGLE final ping -----------
-    for gid, ch, ping in c.execute("SELECT * FROM upcoming_alerts"):
+    # -----------------------------
+    # 4️⃣ Send upcoming milestone summaries per guild
+    # -----------------------------
+    for gid, lines in upcoming_summary.items():
+        c.execute("SELECT channel_id, ping FROM upcoming_alerts WHERE guild_id=?", (gid,))
+        row = c.fetchone()
+        if not row:
+            continue
+
+        ch_id, ping = row
+        channel = bot.get_channel(ch_id)
+        if not channel:
+            continue
+
+        for line in lines:
+            await channel.send(line)
+
         if ping:
-            channel = bot.get_channel(ch)
-            if channel:
-                await channel.send(ping)
+            await channel.send(ping)
 
 # ======================================================
 # CUSTOM INTERVAL LOOP
@@ -168,7 +179,7 @@ async def kst_tracker():
 @tasks.loop(minutes=5)
 async def interval_tracker():
     now = now_kst()
-    c.execute("SELECT video_id,hours,next_run FROM intervals")
+    c.execute("SELECT video_id, hours, next_run FROM intervals")
     rows = c.fetchall()
 
     for vid, hours, next_run in rows:
@@ -187,9 +198,8 @@ async def interval_tracker():
         db.commit()
 
 # ======================================================
-# SLASH COMMANDS
+# SLASH COMMANDS (All 14)
 # ======================================================
-
 @bot.slash_command(description="Add a video to track")
 async def addvideo(ctx, video_id: str, title: str, alert_channel: discord.TextChannel):
     c.execute(
@@ -228,41 +238,31 @@ async def serverlist(ctx):
 @bot.slash_command(description="Force check this channel")
 async def forcecheck(ctx):
     await ctx.defer()
-    c.execute("SELECT title,video_id FROM videos WHERE channel_id=?", (ctx.channel.id,))
+    c.execute("SELECT title, video_id FROM videos WHERE channel_id=?", (ctx.channel.id,))
     for title, vid in c.fetchall():
         v = await fetch_views(vid)
         await ctx.send(f"📊 **{title}** — {v:,} views")
-
-# =============== VIEW COMMANDS ===============
 
 @bot.slash_command(description="Get current views for a specific video")
 async def views(ctx, video_id: str):
     v = await fetch_views(video_id)
     if v is None:
         return await ctx.respond("❌ Could not fetch views.")
-    await ctx.respond(
-        f"📊 **Current Views**\n"
-        f"🔗 Video ID: `{video_id}`\n"
-        f"👀 {v:,} views"
-    )
+    await ctx.respond(f"📊 **Current Views** — {v:,} views")
 
 @bot.slash_command(description="Show current views for all tracked videos in the server")
 async def viewsall(ctx):
     await ctx.defer()
     c.execute("SELECT title, video_id FROM videos WHERE guild_id=?", (ctx.guild.id,))
     videos = c.fetchall()
-
     if not videos:
         return await ctx.followup.send("⚠️ No videos tracked in this server.")
-
     for title, vid in videos:
         v = await fetch_views(vid)
         if v is None:
             await ctx.followup.send(f"❌ {title} — could not fetch views")
         else:
             await ctx.followup.send(f"📊 **{title}** — {v:,} views")
-
-# =============== MILESTONES ===============
 
 @bot.slash_command(description="Set automatic 1M milestone alerts")
 async def setmilestone(ctx, video_id: str, ping: str = ""):
@@ -275,24 +275,6 @@ async def removemilestones(ctx, video_id: str):
     c.execute("UPDATE milestones SET ping='' WHERE video_id=?", (video_id,))
     db.commit()
     await ctx.respond("❌ Milestone alerts removed.")
-
-@bot.slash_command(description="Show all milestones reached in the last 24 hours")
-async def reachedmilestones(ctx):
-    cutoff = now_kst() - timedelta(hours=24)
-    c.execute("""
-        SELECT video_id, last_million, last_alerted_time
-        FROM milestones
-        WHERE last_alerted_time IS NOT NULL
-    """)
-    results = []
-    for vid, million, dt in c.fetchall():
-        t = datetime.fromisoformat(dt)
-        if t >= cutoff:
-            results.append(f"🏆 **{vid}** → {million}M views")
-
-    await ctx.respond("\n".join(results) if results else "None in last 24 hours")
-
-# =============== INTERVALS ===============
 
 @bot.slash_command(description="Set custom interval (hours)")
 async def setinterval(ctx, video_id: str, hours: float):
@@ -309,8 +291,6 @@ async def disableinterval(ctx, video_id: str):
     db.commit()
     await ctx.respond("❌ Interval disabled.")
 
-# =============== UPCOMING MILESTONES ===============
-
 @bot.slash_command(description="Setup upcoming milestone summary")
 async def setupcomingmilestonesalert(ctx, channel: discord.TextChannel, ping: str = ""):
     c.execute(
@@ -320,21 +300,16 @@ async def setupcomingmilestonesalert(ctx, channel: discord.TextChannel, ping: st
     db.commit()
     await ctx.respond("📌 Upcoming milestone summary configured!")
 
-# =============== HEALTH CHECK ===============
-
 @bot.slash_command(description="Bot health check")
 async def botcheck(ctx):
-    await ctx.respond(
-        f"✅ Tracker OK\n"
-        f"🕒 Current KST: {now_kst().strftime('%Y-%m-%d %H:%M')}"
-    )
+    await ctx.respond(f"✅ Tracker OK — Current KST: {now_kst().strftime('%Y-%m-%d %H:%M')}")
 
 # ------------------------------------
 # READY
 # ------------------------------------
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user}")
+    print(f"🚀 Logged in as {bot.user}")
     kst_tracker.start()
     interval_tracker.start()
 
