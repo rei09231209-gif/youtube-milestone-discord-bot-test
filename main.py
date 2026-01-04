@@ -173,6 +173,42 @@ async def kst_tracker():
         if ping:
             await channel.send(ping)
 
+@bot.slash_command(description="Show upcoming milestones within 100k views")
+async def upcoming(ctx):
+    await ctx.defer()
+
+    c.execute("SELECT title, video_id FROM videos WHERE guild_id=?", (ctx.guild.id,))
+    videos = c.fetchall()
+
+    if not videos:
+        return await ctx.followup.send("⚠️ No videos tracked in this server.")
+
+    lines = []
+
+    for title, vid in videos:
+        views = await fetch_views(vid)
+        if views is None:
+            continue
+
+        million = views // 1_000_000
+        next_m = (million + 1) * 1_000_000
+        diff = next_m - views
+
+        if diff <= 100_000:
+            lines.append(
+                f"⏳ **{title}** — {diff:,} views away from **{next_m:,}**!"
+            )
+
+    if not lines:
+        return await ctx.followup.send(
+            "📭 No videos are within 100k of the next milestone."
+        )
+
+    await ctx.followup.send(
+        "🏁 **Upcoming Milestones (Within 100k)**\n" +
+        "\n".join(lines)
+    )
+
 # ======================================================
 # CUSTOM INTERVAL LOOP
 # ======================================================
