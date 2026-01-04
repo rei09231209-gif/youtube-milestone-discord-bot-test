@@ -1,4 +1,3 @@
-
 # PART 1 — Imports, DB setup, helpers, keep-alive
 
 import discord
@@ -68,16 +67,23 @@ async def fetch_views(video_id):
             return int(items[0]["statistics"]["viewCount"])
 
 # ---------- Flask Keep-Alive ----------
+# Keep-alive server for Render
+from flask import Flask
+import threading
+import os
+
 app = Flask("")
 
 @app.route("/")
 def home():
     return "Bot is alive!"
 
-def run_flask():
-    app.run(host="0.0.0.0", port=PORT)
+def run():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
 
-Thread(target=run_flask).start()
+# Run Flask in a separate thread
+threading.Thread(target=run).start()
 
 # PART 2 — Discord Bot setup
 
