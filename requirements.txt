@@ -1,5 +1,5 @@
-py-cord
-requests
-pytz
+py-cord==2.4.1
 aiohttp
 flask
+pytz
+requests
