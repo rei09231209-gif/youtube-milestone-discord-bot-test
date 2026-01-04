@@ -276,6 +276,22 @@ async def removemilestones(ctx, video_id: str):
     db.commit()
     await ctx.respond("❌ Milestone alerts removed.")
 
+@bot.slash_command(description="Show all milestones reached in the last 24 hours")
+async def reachedmilestones(ctx):
+    cutoff = now_kst() - timedelta(hours=24)
+    c.execute("""
+        SELECT video_id, last_million, last_alerted_time
+        FROM milestones
+        WHERE last_alerted_time IS NOT NULL
+    """)
+    results = []
+    for vid, million, dt in c.fetchall():
+        t = datetime.fromisoformat(dt)
+        if t >= cutoff:
+            results.append(f"🏆 **{vid}** → {million}M views")
+
+    await ctx.respond("\n".join(results) if results else "None in last 24 hours")
+
 # =============== INTERVALS ===============
 
 @bot.slash_command(description="Set custom interval (hours)")
