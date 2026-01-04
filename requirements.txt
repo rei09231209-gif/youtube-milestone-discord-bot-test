@@ -3,3 +3,4 @@ aiohttp
 flask
 pytz
 requests
+python-dotenv
