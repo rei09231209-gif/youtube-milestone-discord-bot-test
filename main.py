@@ -232,6 +232,49 @@ async def forcecheck(ctx):
         v = await fetch_views(vid)
         await ctx.respond(f"📊 **{title}** — {v:,} views")
 
+# =========================
+# VIEW COMMANDS
+# =========================
+
+@bot.slash_command(description="Get current views for a specific video")
+async def views(ctx, video_id: str):
+    await ctx.defer(ephemeral=True)
+
+    views = await fetch_views(video_id)
+    if views is None:
+        await ctx.followup.send("❌ Could not fetch views.")
+        return
+
+    await ctx.followup.send(
+        f"📊 **Current Views**\n"
+        f"🔗 Video ID: `{video_id}`\n"
+        f"👀 **{views:,} views**"
+    )
+
+@bot.slash_command(description="Show current views for all tracked videos in the server")
+async def viewsall(ctx):
+    await ctx.defer()
+
+    c.execute(
+        "SELECT title, video_id FROM videos WHERE guild_id=?",
+        (ctx.guild.id,)
+    )
+    videos = c.fetchall()
+
+    if not videos:
+        await ctx.followup.send("⚠️ No videos tracked in this server.")
+        return
+
+    for title, vid in videos:
+        views = await fetch_views(vid)
+        if views is None:
+            await ctx.followup.send(f"❌ **{title}** — could not fetch views")
+        else:
+            await ctx.followup.send(
+                f"📊 **{title}**\n"
+                f"👀 {views:,} views"
+            )
+
 @bot.slash_command(description="Set automatic 1M milestone alerts")
 async def setmilestone(ctx, video_id: str, ping: str = ""):
     c.execute(
