@@ -237,11 +237,23 @@ async def serverlist(ctx):
 
 @bot.slash_command(description="Force check this channel")
 async def forcecheck(ctx):
-    await ctx.defer()
+    await ctx.defer()  # Shows 'Thinking…' immediately
+
+    # Get tracked videos in this channel
     c.execute("SELECT title, video_id FROM videos WHERE channel_id=?", (ctx.channel.id,))
-    for title, vid in c.fetchall():
+    videos = c.fetchall()
+
+    if not videos:
+        # Respond immediately if no videos are tracked
+        return await ctx.followup.send("⚠️ No videos tracked in this channel.")
+
+    # Otherwise, fetch views for each tracked video
+    for title, vid in videos:
         v = await fetch_views(vid)
-        await ctx.send(f"📊 **{title}** — {v:,} views")
+        if v is None:
+            await ctx.followup.send(f"❌ Could not fetch views for **{title}**")
+        else:
+            await ctx.followup.send(f"📊 **{title}** — {v:,} views")
 
 @bot.slash_command(description="Get current views for a specific video")
 async def views(ctx, video_id: str):
