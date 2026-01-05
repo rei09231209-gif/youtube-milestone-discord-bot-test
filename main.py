@@ -177,6 +177,8 @@ async def kst_tracker():
         diff = next_m - views
         if diff <= 100_000:
             upcoming_summary.setdefault(gid, []).append(
+                f"⏳ **{title}** — {diff:,} views away from **{next_m:,}**!"
+            )
                 
 # ======================================================
 # CUSTOM INTERVAL LOOP (fires ONLY at the scheduled time)
@@ -229,8 +231,6 @@ async def interval_tracker():
             "UPDATE intervals SET next_run=?, last_interval_views=? WHERE video_id=?",
             ((now + timedelta(hours=hours)).isoformat(), views, vid)
         )
-        db.commit()             f"⏳ **{title}** — {diff:,} views away from **{next_m:,}**!"
-            )
 
     # ----------------------------------
     # 4️⃣ Send upcoming summaries
