@@ -1,466 +1,427 @@
-import os
-import sqlite3
 import discord
-from discord.ext import commands, tasks
+from discord.ext import tasks, commands
 from discord import app_commands
 import aiohttp
+import sqlite3
+import os
 from datetime import datetime, timedelta
 from flask import Flask
-import threading
+from threading import Thread
+from dotenv import load_dotenv
+import pytz
 import asyncio
 
-# =========================
-# ENVIRONMENT VARIABLES
-# =========================
-
-BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+# ========================================
+# ENV
+# ========================================
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+PORT = int(os.getenv("PORT", 8080))
 
-if not BOT_TOKEN:
-    print("❌ ERROR: DISCORD_BOT_TOKEN missing.")
-if not YOUTUBE_API_KEY:
-    print("❌ ERROR: YOUTUBE_API_KEY missing.")
+if not BOT_TOKEN or not YOUTUBE_API_KEY:
+    raise ValueError("❌ Missing BOT_TOKEN or YOUTUBE_API_KEY")
 
-# =========================
-# GLOBAL HTTP SESSION
-# =========================
-session: aiohttp.ClientSession | None = None
-
-async def create_session():
-    global session
-    if session is None or session.closed:
-        session = aiohttp.ClientSession()
-
-# =========================
-# DATABASE
-# =========================
-
-db = sqlite3.connect("db.sqlite", check_same_thread=False)
-c = db.cursor()
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS videos (
-    video_id TEXT PRIMARY KEY,
-    title TEXT,
-    guild_id INTEGER,
-    channel_id INTEGER,
-    alert_channel INTEGER
-)
-""")
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS milestones (
-    video_id TEXT PRIMARY KEY,
-    last_million INTEGER DEFAULT 0,
-    ping TEXT DEFAULT ''
-)
-""")
-
-# FIXED → restored 5-column table
-c.execute("""
-CREATE TABLE IF NOT EXISTS intervals (
-    video_id TEXT PRIMARY KEY,
-    hours REAL,
-    next_time TEXT,
-    last_views INTEGER,
-    temp_views INTEGER
-)
-""")
-
-c.execute("""
-CREATE TABLE IF NOT EXISTS upcoming_alerts (
-    guild_id INTEGER PRIMARY KEY,
-    channel_id INTEGER,
-    ping TEXT
-)
-""")
-
-db.commit()
-
-# =========================
-# TIME UTILS
-# =========================
+# ========================================
+# TIME (KST)
+# ========================================
+KST = pytz.timezone("Asia/Seoul")
 
 def now_kst():
-    return datetime.utcnow() + timedelta(hours=9)
+    return datetime.now(KST)
 
-# =========================
-# YOUTUBE FETCH
-# =========================
+TRACK_HOURS = [0, 12, 17]  # 12AM, 12PM, 5PM KST
 
+# ========================================
+# DATABASE (THREAD-SAFE)
+# ========================================
+def get_db():
+    """Thread-safe DB connection."""
+    conn = sqlite3.connect("yt_tracker.db", timeout=10)
+    conn.execute("PRAGMA busy_timeout = 5000")
+    return conn
+
+# Initialize tables
+with get_db() as db:
+    c = db.cursor()
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS videos (
+        video_id TEXT,
+        title TEXT,
+        guild_id INTEGER,
+        channel_id INTEGER,
+        alert_channel INTEGER,
+        PRIMARY KEY(video_id, guild_id)
+    )
+    """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS milestones (
+        video_id TEXT PRIMARY KEY,
+        last_million INTEGER DEFAULT 0,
+        ping TEXT DEFAULT ''
+    )
+    """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS intervals (
+        video_id TEXT PRIMARY KEY,
+        hours REAL DEFAULT 0,
+        next_run TEXT,
+        last_views INTEGER DEFAULT 0,
+        last_interval_views INTEGER DEFAULT 0
+    )
+    """)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS upcoming_alerts (
+        guild_id INTEGER PRIMARY KEY,
+        channel_id INTEGER,
+        ping TEXT DEFAULT ''
+    )
+    """)
+    db.commit()
+
+def db_execute(query, params=(), fetch=False):
+    """Safe DB execute with proper returns."""
+    with get_db() as db:
+        c = db.cursor()
+        c.execute(query, params)
+        db.commit()
+        if fetch and query.strip().upper().startswith('SELECT'):
+            return c.fetchall()
+        return True
+
+def db_fetch(query, params=()):
+    """DB fetch wrapper."""
+    return db_execute(query, params, fetch=True)
+
+# ========================================
+# YOUTUBE API
+# ========================================
 async def fetch_views(video_id):
-    """Global-session YouTube fetch with retries."""
-    await create_session()
-
-    params = {
-        "part": "statistics",
-        "id": video_id,
-        "key": YOUTUBE_API_KEY
-    }
-
-    for _ in range(3):  # retry up to 3 times
+    """Fetch views with retries."""
+    url = f"https://www.googleapis.com/youtube/v3/videos?part=statistics&id={video_id}&key={YOUTUBE_API_KEY}"
+    
+    for attempt in range(3):
         try:
-            async with session.get(
-                "https://www.googleapis.com/youtube/v3/videos",
-                params=params,
-                timeout=10
-            ) as r:
-
-                if r.status != 200:
-                    await asyncio.sleep(1)
-                    continue
-
-                data = await r.json()
-                if not data.get("items"):
-                    return None
-
-                return int(data["items"][0]["statistics"]["viewCount"])
-
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as r:
+                    if r.status != 200:
+                        await asyncio.sleep(1)
+                        continue
+                    data = await r.json()
+                    if not data.get("items"):
+                        return None
+                    return int(data["items"][0]["statistics"]["viewCount"])
         except Exception:
-            await asyncio.sleep(1)
-
+            await asyncio.sleep(1 + attempt * 0.5)
     return None
 
-# =========================
+# ========================================
+# FLASK KEEPALIVE
+# ========================================
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return {"status": "alive", "time": now_kst().isoformat()}
+
+@app.route("/health")
+def health():
+    return {"db": "ok", "status": "running"}
+
+def run_flask():
+    app.run(host="0.0.0.0", port=PORT, debug=False)
+
+# ========================================
 # DISCORD BOT
-# =========================
-
+# ========================================
 intents = discord.Intents.default()
-bot = commands.Bot(command_prefix="!", intents=intents)
-tree = bot.tree
+bot = commands.Bot(command_prefix='!', intents=intents)
 
-# =========================
-# SLASH COMMANDS
-# =========================
-
-@tree.command(description="Add a video to track")
-async def addvideo(interaction: discord.Interaction, video_id: str, title: str):
-    alert_channel = interaction.channel.id
-
-    # FIX: insert 5 columns into intervals
-    c.execute("INSERT OR IGNORE INTO videos VALUES (?,?,?,?,?)",
-              (video_id, title, interaction.guild.id, interaction.channel.id, alert_channel))
-
-    c.execute("INSERT OR IGNORE INTO milestones VALUES (?,?,?)",
-              (video_id, 0, ""))
-
-    next_time = now_kst().isoformat()
-    c.execute("INSERT OR IGNORE INTO intervals VALUES (?,?,?,?,?)",
-              (video_id, 0, next_time, 0, 0))
-
-    db.commit()
-
-    await interaction.response.send_message(
-        f"✅ Tracking **{title}**\n📌 Updates in <#{alert_channel}>"
-    )
-
-
-@tree.command(description="Remove a tracked video")
-async def removevideo(interaction: discord.Interaction, video_id: str):
-    c.execute("DELETE FROM videos WHERE video_id=?", (video_id,))
-    c.execute("DELETE FROM milestones WHERE video_id=?", (video_id,))
-    c.execute("DELETE FROM intervals WHERE video_id=?", (video_id,))
-    db.commit()
-    await interaction.response.send_message("🗑️ Removed.")
-
-
-@tree.command(description="List videos in this channel")
-async def listvideos(interaction: discord.Interaction):
-    c.execute("SELECT title FROM videos WHERE channel_id=?", (interaction.channel.id,))
-    rows = c.fetchall()
-    if not rows:
-        return await interaction.response.send_message("📭 No videos.")
-    await interaction.response.send_message("\n".join(f"• {r[0]}" for r in rows))
-
-
-@tree.command(description="List all server videos")
-async def serverlist(interaction: discord.Interaction):
-    c.execute("SELECT title FROM videos WHERE guild_id=?", (interaction.guild.id,))
-    rows = c.fetchall()
-    if not rows:
-        return await interaction.response.send_message("📭 No videos in server.")
-    await interaction.response.send_message("\n".join(f"• {r[0]}" for r in rows))
-
-
-@tree.command(description="Force check videos in this channel")
-async def forcecheck(interaction: discord.Interaction):
-    await interaction.response.defer()
-
-    c.execute("SELECT title, video_id FROM videos WHERE channel_id=?", (interaction.channel.id,))
-    videos = c.fetchall()
-
-    if not videos:
-        return await interaction.followup.send("⚠️ None tracked.")
-
-    for title, vid in videos:
-        views = await fetch_views(vid)
-        if views is None:
-            await interaction.followup.send(f"❌ Error fetching **{title}**")
-            continue
-
-        c.execute("SELECT last_views FROM intervals WHERE video_id=?", (vid,))
-        row = c.fetchone()
-        old = row[0] if row else 0
-        net = views - old
-
-        c.execute("UPDATE intervals SET last_views=? WHERE video_id=?", (views, vid))
-        db.commit()
-
-        await interaction.followup.send(
-            f"📊 **{title}** — {views:,} views (+{net:,})"
-        )
-
-
-@tree.command(description="Get current views")
-async def views(interaction: discord.Interaction, video_id: str):
-    v = await fetch_views(video_id)
-    if v is None:
-        return await interaction.response.send_message("❌ Error fetching views.")
-    await interaction.response.send_message(f"📊 {v:,} views")
-
-
-@tree.command(description="Show views for all tracked videos")
-async def viewsall(interaction: discord.Interaction):
-    await interaction.response.defer()
-
-    c.execute("SELECT title, video_id FROM videos WHERE guild_id=?", (interaction.guild.id,))
-    videos = c.fetchall()
-
-    if not videos:
-        return await interaction.followup.send("⚠️ None tracked.")
-
-    for title, vid in videos:
-        v = await fetch_views(vid)
-        if v is None:
-            await interaction.followup.send(f"❌ {title}: error")
-            continue
-
-        c.execute("SELECT last_views FROM intervals WHERE video_id=?", (vid,))
-        row = c.fetchone()
-        old = row[0] if row else 0
-        net = v - old
-
-        c.execute("UPDATE intervals SET last_views=? WHERE video_id=?", (v, vid))
-        db.commit()
-
-        await interaction.followup.send(
-            f"📊 **{title}** — {v:,} (+{net:,})"
-        )
-
-
-@tree.command(description="Set milestone alert channel")
-async def setmilestone(interaction: discord.Interaction, video_id: str, channel: discord.TextChannel, ping: str = ""):
-    c.execute("UPDATE milestones SET ping=? WHERE video_id=?",
-              (f"{channel.id}|{ping}", video_id))
-    db.commit()
-    await interaction.response.send_message(f"🏆 Alerts → <#{channel.id}>")
-
-
-@tree.command(description="Show reached milestones")
-async def reachedmilestones(interaction: discord.Interaction):
-    await interaction.response.defer()
-
-    c.execute("SELECT title, video_id FROM videos WHERE guild_id=?", (interaction.guild.id,))
-    videos = c.fetchall()
-
-    lines = []
-    for title, vid in videos:
-        c.execute("SELECT last_million FROM milestones WHERE video_id=?", (vid,))
-        row = c.fetchone()
-        if row and row[0] > 0:
-            lines.append(f"🏆 **{title}** — {row[0]}M views")
-
-    if not lines:
-        return await interaction.followup.send("📭 None yet.")
-
-    await interaction.followup.send("\n".join(lines))
-
-
-@tree.command(description="Remove milestone alerts")
-async def removemilestones(interaction: discord.Interaction, video_id: str):
-    c.execute("UPDATE milestones SET ping='' WHERE video_id=?", (video_id,))
-    db.commit()
-    await interaction.response.send_message("❌ Removed.")
-
-
-@tree.command(description="Set custom interval in hours")
-async def setinterval(interaction: discord.Interaction, video_id: str, hours: float):
-    next_time = now_kst() + timedelta(hours=hours)
-    c.execute("INSERT OR REPLACE INTO intervals VALUES (?,?,?,?,?)",
-              (video_id, hours, next_time.isoformat(), 0, 0))
-    db.commit()
-    await interaction.response.send_message("⏱️ Interval set.")
-
-
-@tree.command(description="Disable interval tracking")
-async def disableinterval(interaction: discord.Interaction, video_id: str):
-    c.execute("DELETE FROM intervals WHERE video_id=?", (video_id,))
-    db.commit()
-    await interaction.response.send_message("❌ Disabled.")
-
-
-@tree.command(description="Setup upcoming milestone summary")
-async def setupcomingmilestonesalert(interaction: discord.Interaction, channel: discord.TextChannel, ping: str = ""):
-    c.execute("INSERT OR REPLACE INTO upcoming_alerts VALUES (?,?,?)",
-              (interaction.guild.id, channel.id, ping))
-    db.commit()
-    await interaction.response.send_message("📌 Upcoming summary set.")
-
-
-@tree.command(description="Show upcoming milestones within 100k")
-async def upcoming(interaction: discord.Interaction):
-    await interaction.response.defer()
-
-    c.execute("SELECT title, video_id FROM videos WHERE guild_id=?", (interaction.guild.id,))
-    videos = c.fetchall()
-
-    lines = []
-
-    for title, vid in videos:
-        v = await fetch_views(vid)
-        if v is None:
-            continue
-
-        next_m = ((v // 1_000_000) + 1) * 1_000_000
-        diff = next_m - v
-
-        if diff <= 100_000:
-            lines.append(f"⏳ **{title}** — {diff:,} away from {next_m:,}")
-
-    if not lines:
-        return await interaction.followup.send("📭 None.")
-
-    await interaction.followup.send("\n".join(lines))
-
-
-@tree.command(description="Bot health check")
-async def botcheck(interaction: discord.Interaction):
-    await interaction.response.send_message(
-        f"✅ OK — KST: {now_kst().strftime('%Y-%m-%d %H:%M')}"
-    )
-
-# =========================
-# BACKGROUND TASKS
-# =========================
-
+# ========================================
+# KST TRACKER (12AM, 12PM, 5PM KST)
+# ========================================
 @tasks.loop(minutes=1)
-async def tracking_loop():
-    now = now_kst()
-
-    c.execute("SELECT video_id, hours, next_time, last_views, temp_views FROM intervals")
-    rows = c.fetchall()
-
-    for vid, hours, next_t, last, temp in rows:
-        next_time = datetime.fromisoformat(next_t)
-
-        if now >= next_time:
+async def kst_tracker():
+    try:
+        now = now_kst()
+        # 2-minute window for reliability
+        if now.hour not in TRACK_HOURS or now.minute > 1:
+            return
+        
+        print(f"🔄 KST Check: {now.strftime('%H:%M')}")
+        videos = db_fetch("SELECT video_id, title, guild_id, alert_channel FROM videos")
+        
+        for vid, title, gid, alert_ch in videos:
             views = await fetch_views(vid)
             if views is None:
                 continue
 
-            net = views - last if last else 0
+            # Net change
+            old_data = db_fetch("SELECT last_views FROM intervals WHERE video_id=?", (vid,))
+            old_views = old_data[0][0] if old_data else 0
+            net = f"(+{views-old_views:,})" if old_views else ""
 
-            c.execute("UPDATE intervals SET last_views=?, next_time=? WHERE video_id=?",
-                      (views, (now + timedelta(hours=hours)).isoformat(), vid))
-            db.commit()
-
-            c.execute("SELECT title, alert_channel FROM videos WHERE video_id=?", (vid,))
-            row = c.fetchone()
-            if row:
-                title, ch = row
-                channel = bot.get_channel(ch)
-                if channel:
-                    await channel.send(f"📈 **{title}** — {views:,} (+{net:,})")
-
-
-@tasks.loop(minutes=2)
-async def kst_tracker():
-    now = now_kst()
-
-    if now.hour != 0 or now.minute != 0:
-        return
-
-    # Daily milestones
-    c.execute("SELECT video_id, title FROM videos")
-    videos = c.fetchall()
-
-    for vid, title in videos:
-        views = await fetch_views(vid)
-        if views is None:
-            continue
-
-        current_m = views // 1_000_000
-
-        c.execute("SELECT last_million, ping FROM milestones WHERE video_id=?", (vid,))
-        row = c.fetchone()
-
-        if row and current_m > row[0]:
-            if row[1]:
-                ping_ch, ping = row[1].split("|")
-                channel = bot.get_channel(int(ping_ch))
-                if channel:
-                    await channel.send(f"🏆 **{title}** reached **{current_m}M** {ping}")
-
-            c.execute("UPDATE milestones SET last_million=? WHERE video_id=?", (current_m, vid))
-            db.commit()
-
-    # Upcoming summary
-    c.execute("SELECT guild_id, channel_id, ping FROM upcoming_alerts")
-    alerts = c.fetchall()
-
-    for g_id, ch_id, ping in alerts:
-        c.execute("SELECT title, video_id FROM videos WHERE guild_id=?", (g_id,))
-        vids = c.fetchall()
-
-        lines = []
-        for title, vid in vids:
-            v = await fetch_views(vid)
-            if v is None:
-                continue
-            next_m = ((v // 1_000_000) + 1) * 1_000_000
-            diff = next_m - v
-            if diff <= 100_000:
-                lines.append(f"⏳ {title} — {diff:,} away from {next_m:,}")
-
-        if lines:
-            ch = bot.get_channel(ch_id)
-            if ch:
-                await ch.send(
-                    "📌 **Upcoming Milestones Today**\n" +
-                    "\n".join(lines) +
-                    (f"\n{ping}" if ping else "")
+            # Send update
+            channel = bot.get_channel(alert_ch)
+            if channel:
+                await channel.send(
+                    f"📅 **{now.strftime('%Y-%m-%d %H:%M KST')}**\n"
+                    f"👀 **{title}** — {views:,} views {net}"
                 )
 
-# =========================
-# BOT READY
-# =========================
+            # Save views
+            db_execute("INSERT OR REPLACE INTO intervals (video_id, hours, next_run, last_views) VALUES (?, 0, ?, ?)",
+                      (vid, now.isoformat(), views))
 
+            # Check milestones
+            million = views // 1_000_000
+            milestone_data = db_fetch("SELECT last_million, ping FROM milestones WHERE video_id=?", (vid,))
+            
+            if milestone_data and million > milestone_data[0][0] and milestone_data[0][1]:
+                last_mil, ping_raw = milestone_data[0]
+                try:
+                    ch_id, ping_msg = ping_raw.split("|", 1)
+                    mil_channel = bot.get_channel(int(ch_id))
+                except:
+                    mil_channel = channel
+                    ping_msg = ping_raw
+                
+                if mil_channel:
+                    await mil_channel.send(
+                        f"🏆 **{title}** crossed **{million}M views**!\n{ping_msg}"
+                    )
+                
+                db_execute("UPDATE milestones SET last_million=? WHERE video_id=?", (million, vid))
+
+    except Exception as e:
+        print(f"❌ KST Tracker Error: {e}")
+
+# ========================================
+# INTERVAL TRACKER (Every 5min)
+# ========================================
+@tasks.loop(minutes=5)
+async def tracking_loop():
+    try:
+        now = now_kst()
+        rows = db_fetch("SELECT video_id, hours, next_run, last_interval_views FROM intervals WHERE hours > 0")
+        
+        for video_id, hours, next_run, last_interval_views in rows:
+            try:
+                next_run_dt = datetime.fromisoformat(next_run).replace(tzinfo=KST)
+                if now < next_run_dt:
+                    continue
+            except:
+                continue
+
+            video_data = db_fetch("SELECT title, channel_id FROM videos WHERE video_id=?", (video_id,))
+            if not video_data:
+                continue
+
+            title, ch_id = video_data[0]
+            channel = bot.get_channel(ch_id)
+            if not channel:
+                continue
+
+            views = await fetch_views(video_id)
+            if views is None:
+                continue
+
+            net = views - last_interval_views if last_interval_views else 0
+            next_time = now + timedelta(hours=hours)
+
+            await channel.send(
+                f"⏱️ **{title}** Interval Update\n"
+                f"📊 {views:,} views (+{net:,})\n"
+                f"⏳ Next: {hours}hrs"
+            )
+
+            db_execute("UPDATE intervals SET next_run=?, last_interval_views=? WHERE video_id=?",
+                      (next_time.isoformat(), views, video_id))
+
+    except Exception as e:
+        print(f"❌ Interval Error: {e}")
+
+# ========================================
+# ALL 15 SLASH COMMANDS
+# ========================================
+@bot.tree.command(name="addvideo", description="Add video to track")
+@app_commands.describe(video_id="YouTube video ID", title="Video title")
+async def addvideo(interaction: discord.Interaction, video_id: str, title: str):
+    db_execute("INSERT OR IGNORE INTO videos VALUES (?,?,?,?,?)", 
+               (video_id, title, interaction.guild.id, interaction.channel.id, interaction.channel.id))
+    db_execute("INSERT OR IGNORE INTO milestones VALUES (?,?,?)", (video_id, 0, ""))
+    db_execute("INSERT OR IGNORE INTO intervals VALUES (?,?,?,?,?)", 
+               (video_id, 0, now_kst().isoformat(), 0, 0))
+    await interaction.response.send_message(f"✅ Tracking **{title}** in <#{interaction.channel.id}>")
+
+@bot.tree.command(name="removevideo", description="Remove video")
+@app_commands.describe(video_id="YouTube video ID")
+async def removevideo(interaction: discord.Interaction, video_id: str):
+    db_execute("DELETE FROM videos WHERE video_id=?", (video_id,))
+    db_execute("DELETE FROM milestones WHERE video_id=?", (video_id,))
+    db_execute("DELETE FROM intervals WHERE video_id=?", (video_id,))
+    await interaction.response.send_message("🗑️ Video removed")
+
+@bot.tree.command(name="listvideos", description="Videos in this channel")
+async def listvideos(interaction: discord.Interaction):
+    rows = db_fetch("SELECT title FROM videos WHERE channel_id=?", (interaction.channel.id,))
+    if not rows:
+        await interaction.response.send_message("📭 No videos here")
+    else:
+        await interaction.response.send_message("\n".join(f"• {r[0]}" for r in rows))
+
+@bot.tree.command(name="serverlist", description="All server videos")
+async def serverlist(interaction: discord.Interaction):
+    rows = db_fetch("SELECT title FROM videos WHERE guild_id=?", (interaction.guild.id,))
+    if not rows:
+        await interaction.response.send_message("📭 No server videos")
+    else:
+        await interaction.response.send_message("\n".join(f"• {r[0]}" for r in rows))
+
+@bot.tree.command(name="forcecheck", description="Force check channel videos")
+async def forcecheck(interaction: discord.Interaction):
+    await interaction.response.defer()
+    videos = db_fetch("SELECT title, video_id FROM videos WHERE channel_id=?", (interaction.channel.id,))
+    
+    if not videos:
+        return await interaction.followup.send("⚠️ No videos")
+    
+    for title, vid in videos:
+        views = await fetch_views(vid)
+        if views:
+            old = db_fetch("SELECT last_views FROM intervals WHERE video_id=?", (vid,))
+            old_views = old[0][0] if old else 0
+            db_execute("UPDATE intervals SET last_views=? WHERE video_id=?", (views, vid))
+            await interaction.followup.send(f"📊 **{title}**: {views:,} (+{views-old_views:,})")
+        else:
+            await interaction.followup.send(f"❌ **{title}**: fetch failed")
+
+@bot.tree.command(name="views", description="Single video views")
+@app_commands.describe(video_id="YouTube video ID")
+async def views(interaction: discord.Interaction, video_id: str):
+    v = await fetch_views(video_id)
+    if v:
+        await interaction.response.send_message(f"📊 {v:,} views")
+    else:
+        await interaction.response.send_message("❌ Fetch failed")
+
+@bot.tree.command(name="viewsall", description="All server videos")
+async def viewsall(interaction: discord.Interaction):
+    await interaction.response.defer()
+    videos = db_fetch("SELECT title, video_id FROM videos WHERE guild_id=?", (interaction.guild.id,))
+    
+    if not videos:
+        return await interaction.followup.send("⚠️ No videos")
+    
+    for title, vid in videos:
+        views = await fetch_views(vid)
+        if views:
+            old = db_fetch("SELECT last_views FROM intervals WHERE video_id=?", (vid,))
+            old_views = old[0][0] if old else 0
+            db_execute("UPDATE intervals SET last_views=? WHERE video_id=?", (views, vid))
+            await interaction.followup.send(f"📊 **{title}**: {views:,} (+{views-old_views:,})")
+
+@bot.tree.command(name="setmilestone", description="Milestone alerts")
+@app_commands.describe(video_id="Video ID", channel="Alert channel", ping="Ping message")
+async def setmilestone(interaction: discord.Interaction, video_id: str, channel: discord.TextChannel, ping: str = ""):
+    ping_data = f"{channel.id}|{ping}"
+    db_execute("INSERT OR REPLACE INTO milestones (video_id, ping) VALUES (?, ?)", (video_id, ping_data))
+    await interaction.response.send_message(f"🏆 Alerts set for <#{channel.id}>")
+
+@bot.tree.command(name="reachedmilestones", description="Show hit milestones")
+async def reachedmilestones(interaction: discord.Interaction):
+    await interaction.response.defer()
+    videos = db_fetch("SELECT title, video_id FROM videos WHERE guild_id=?", (interaction.guild.id,))
+    lines = []
+    
+    for title, vid in videos:
+        data = db_fetch("SELECT last_million FROM milestones WHERE video_id=?", (vid,))
+        if data and data[0][0] > 0:
+            lines.append(f"🏆 **{title}**: {data[0][0]}M")
+    
+    if not lines:
+        await interaction.followup.send("📭 No milestones yet")
+    else:
+        await interaction.followup.send("\n".join(lines))
+
+@bot.tree.command(name="removemilestones", description="Clear milestone alerts")
+@app_commands.describe(video_id="Video ID")
+async def removemilestones(interaction: discord.Interaction, video_id: str):
+    db_execute("UPDATE milestones SET ping='' WHERE video_id=?", (video_id,))
+    await interaction.response.send_message("❌ Alerts cleared")
+
+@bot.tree.command(name="setinterval", description="Custom update interval")
+@app_commands.describe(video_id="Video ID", hours="Hours between checks")
+async def setinterval(interaction: discord.Interaction, video_id: str, hours: float):
+    next_time = now_kst() + timedelta(hours=hours)
+    db_execute("INSERT OR REPLACE INTO intervals VALUES (?,?,?,?,?)",
+               (video_id, hours, next_time.isoformat(), 0, 0))
+    await interaction.response.send_message(f"⏱️ Interval set: {hours}hrs")
+
+@bot.tree.command(name="disableinterval", description="Stop interval updates")
+@app_commands.describe(video_id="Video ID")
+async def disableinterval(interaction: discord.Interaction, video_id: str):
+    db_execute("DELETE FROM intervals WHERE video_id=?", (video_id,))
+    await interaction.response.send_message("⏹️ Intervals stopped")
+
+@bot.tree.command(name="setupcomingmilestonesalert", description="Upcoming summary")
+@app_commands.describe(channel="Summary channel", ping="Ping message")
+async def setupcomingmilestonesalert(interaction: discord.Interaction, channel: discord.TextChannel, ping: str = ""):
+    db_execute("INSERT OR REPLACE INTO upcoming_alerts VALUES (?,?,?)", 
+               (interaction.guild.id, channel.id, ping))
+    await interaction.response.send_message("📌 Summary alerts configured")
+
+@bot.tree.command(name="upcoming", description="Videos near milestones")
+async def upcoming(interaction: discord.Interaction):
+    await interaction.response.defer()
+    videos = db_fetch("SELECT title, video_id FROM videos WHERE guild_id=?", (interaction.guild.id,))
+    lines = []
+    
+    for title, vid in videos:
+        views = await fetch_views(vid)
+        if views:
+            next_m = ((views // 1_000_000) + 1) * 1_000_000
+            diff = next_m - views
+            if diff <= 100_000:
+                lines.append(f"⏳ **{title}**: {diff:,} to {next_m:,}")
+    
+    if not lines:
+        await interaction.followup.send("📭 Nothing near milestones")
+    else:
+        await interaction.followup.send("\n".join(lines))
+
+@bot.tree.command(name="botcheck", description="Bot status")
+async def botcheck(interaction: discord.Interaction):
+    await interaction.response.send_message(f"✅ KST: {now_kst().strftime('%Y-%m-%d %H:%M')}")
+
+# ========================================
+# BOT EVENTS
+# ========================================
 @bot.event
 async def on_ready():
-    print(f"🚀 Logged in as {bot.user}")
-    await create_session()
-    await tree.sync()
-    tracking_loop.start()
+    print(f"🚀 {bot.user} online - KST: {now_kst().strftime('%H:%M')}")
+    
+    try:
+        synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} commands")
+    except Exception as e:
+        print(f"❌ Sync error: {e}")
+    
     kst_tracker.start()
-    print("⏱️ Tracking loops running.")
+    tracking_loop.start()
+    print("⏱️ Trackers started")
+    
+    # Start Flask AFTER bot is ready
+    Thread(target=run_flask, daemon=True).start()
+    print("🌐 Flask started")
 
-# =========================
-# KEEPALIVE SERVER
-# =========================
+@bot.event
+async def on_error(event, *args, **kwargs):
+    print(f"❌ Error in {event}: {args}")
 
-app = Flask("keepalive")
-
-@app.route("/")
-def home():
-    return "OK - Bot alive"
-
-def run_server():
-    app.run(host="0.0.0.0", port=8080)
-
-threading.Thread(target=run_server).start()
-
-# =========================
-# RUN BOT
-# =========================
-
-bot.run(BOT_TOKEN)
+# ========================================
+# START
+# ========================================
+if __name__ == "__main__":
+    bot.run(BOT_TOKEN)
