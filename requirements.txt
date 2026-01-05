@@ -1,6 +1,5 @@
-py-cord==2.4.1
-aiohttp
-flask
-pytz
-requests
-python-dotenv
+discord.py==2.3.2
+aiohttp==3.9.5
+python-dotenv==1.0.0
+pytz==2023.3
+Flask==3.0.0
