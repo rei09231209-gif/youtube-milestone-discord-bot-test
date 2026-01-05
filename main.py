@@ -201,17 +201,21 @@ async def interval_tracker():
 # SLASH COMMANDS (All 14)
 # ======================================================
 @bot.slash_command(description="Add a video to track")
-async def addvideo(ctx, video_id: str, title: str, alert_channel: discord.TextChannel):
+async def addvideo(ctx, video_id: str, title: str):
+    # Use the channel the command was run in
+    alert_channel = ctx.channel.id  
+
     c.execute(
         "INSERT OR IGNORE INTO videos VALUES (?,?,?,?,?)",
-        (video_id, title, ctx.guild.id, ctx.channel.id, alert_channel.id)
+        (video_id, title, ctx.guild.id, ctx.channel.id, alert_channel)
     )
     c.execute(
         "INSERT OR IGNORE INTO milestones VALUES (?,?,?)",
         (video_id, 0, "")
     )
     db.commit()
-    await ctx.respond(f"✅ Now tracking **{title}**!")
+
+    await ctx.respond(f"✅ Now tracking **{title}**!\nTracking posts will appear in <#{alert_channel}>")
 
 @bot.slash_command(description="Remove a tracked video")
 async def removevideo(ctx, video_id: str):
@@ -275,6 +279,16 @@ async def viewsall(ctx):
             await ctx.followup.send(f"❌ {title} — could not fetch views")
         else:
             await ctx.followup.send(f"📊 **{title}** — {v:,} views")
+
+@bot.slash_command(description="Set milestone alerts with custom channel")
+async def setmilestone(ctx, video_id: str, channel: discord.TextChannel, ping: str = ""):
+    # Save ping with encoded channel info
+    combined = f"{channel.id}|{ping}"
+
+    c.execute("UPDATE milestones SET ping=? WHERE video_id=?", (combined, video_id))
+    db.commit()
+
+    await ctx.respond(f"🏆 Milestone alerts will be sent in <#{channel.id}>!")
 
 @bot.slash_command(description="Show recently reached 1M milestones for tracked videos")
 async def reachedmilestones(ctx):
