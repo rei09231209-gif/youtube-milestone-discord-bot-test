@@ -48,6 +48,10 @@ last_million INTEGER DEFAULT 0,
 ping TEXT
 )""")
 
+db = sqlite3.connect("yt_tracker.db")
+c = db.cursor()
+c.execute("ALTER TABLE intervals ADD COLUMN last_interval_views INTEGER DEFAULT 0;")
+db.commit()
 c.execute("""CREATE TABLE IF NOT EXISTS intervals (
 video_id TEXT PRIMARY KEY,
 hours REAL,
