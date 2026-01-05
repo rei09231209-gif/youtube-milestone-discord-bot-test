@@ -131,11 +131,18 @@ async def kst_tracker():
         c.execute("SELECT last_million, ping FROM milestones WHERE video_id=?", (vid,))
         row = c.fetchone()
 
-        if row:
-            last, ping = row
+       if row:
+    last, ping_raw = row
+    # Format: "channel_id|ping"
+    try:
+        ch_id_str, ping = ping_raw.split("|", 1)
+        mil_channel = bot.get_channel(int(ch_id_str))
+    except:
+        mil_channel = channel  # fallback to default alert_channel
+        ping = ping_raw
             if million > last:
-                if channel:
-                    await channel.send(
+                if mil_channel:
+                    await mil_channel.send(
                         f"🏆 **Milestone Alert!**\n"
                         f"**{title}** just crossed **{million}M views**!\n"
                         f"{ping or ''}"
