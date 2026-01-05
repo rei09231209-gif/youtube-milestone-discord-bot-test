@@ -454,6 +454,6 @@ async def botcheck(ctx):
 async def on_ready():
     print(f"🚀 Logged in as {bot.user}")
     kst_tracker.start()
-    interval_tracker.start()
+    tracking_loop.start()
 
 bot.run(BOT_TOKEN)
