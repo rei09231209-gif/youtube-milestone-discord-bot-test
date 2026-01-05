@@ -276,27 +276,31 @@ async def viewsall(ctx):
         else:
             await ctx.followup.send(f"📊 **{title}** — {v:,} views")
 
-@bot.slash_command(description="Show milestones reached in the last 24 hours")
+@bot.slash_command(description="Show recently reached 1M milestones for tracked videos")
 async def reachedmilestones(ctx):
-    cutoff = now_kst() - timedelta(hours=24)
-    c.execute("""
-        SELECT video_id, last_million, last_alerted_time
-        FROM milestones
-        WHERE last_alerted_time IS NOT NULL
-    """)
-    results = []
+    await ctx.defer()
 
-    for vid, million, dt in c.fetchall():
-        t = datetime.fromisoformat(dt)
-        if t >= cutoff:
-            results.append(f"🏆 {vid} → {million}M views")
+    c.execute("SELECT video_id, title FROM videos WHERE guild_id=?", (ctx.guild.id,))
+    videos = c.fetchall()
 
-    await ctx.respond("\n".join(results) if results else "None in the last 24 hours")
-@bot.slash_command(description="Set automatic 1M milestone alerts")
-async def setmilestone(ctx, video_id: str, ping: str = ""):
-    c.execute("UPDATE milestones SET ping=? WHERE video_id=?", (ping, video_id))
-    db.commit()
-    await ctx.respond("🎯 Milestone alerts updated!")
+    if not videos:
+        return await ctx.followup.send("⚠️ No videos tracked in this server.")
+
+    lines = []
+
+    for vid, title in videos:
+        c.execute("SELECT last_million FROM milestones WHERE video_id=?", (vid,))
+        row = c.fetchone()
+
+        if row and row[0] > 0:
+            lines.append(f"🏆 **{title}** — reached **{row[0]}M views**")
+
+    if not lines:
+        return await ctx.followup.send("📭 No milestones have been reached yet.")
+
+    await ctx.followup.send(
+        "🎯 **Reached Milestones**\n" + "\n".join(lines)
+    )
 
 @bot.slash_command(description="Remove milestone alerts for a video")
 async def removemilestones(ctx, video_id: str):
