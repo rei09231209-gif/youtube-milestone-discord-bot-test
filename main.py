@@ -177,7 +177,59 @@ async def kst_tracker():
         diff = next_m - views
         if diff <= 100_000:
             upcoming_summary.setdefault(gid, []).append(
-                f"⏳ **{title}** — {diff:,} views away from **{next_m:,}**!"
+                
+# ======================================================
+# CUSTOM INTERVAL LOOP (fires ONLY at the scheduled time)
+# ======================================================
+@tasks.loop(minutes=5)
+async def interval_tracker():
+    now = now_kst()
+
+    c.execute("SELECT video_id, hours, next_run, last_interval_views FROM intervals")
+    rows = c.fetchall()
+
+    for vid, hours, next_run, last_views in rows:
+        run_at = datetime.fromisoformat(next_run)
+
+        # Not time yet → skip
+        if now < run_at:
+            continue
+
+        # Fetch views
+        views = await fetch_views(vid)
+        if views is None:
+            continue
+
+        # Get video title + alert channel
+        c.execute("SELECT title, alert_channel FROM videos WHERE video_id=?", (vid,))
+        row = c.fetchone()
+        if not row:
+            continue
+
+        title, alert_ch = row
+        channel = bot.get_channel(alert_ch)
+
+        # Calculate net change
+        net = 0
+        if last_views is not None:
+            net = views - last_views
+
+        # Format net text
+        net_text = f"(+{net:,})" if net > 0 else "(0)"
+
+        # Send interval message ONLY at interval time
+        if channel:
+            await channel.send(
+                f"⏱️ **Interval Track** — {now.strftime('%Y-%m-%d %H:%M KST')}\n"
+                f"📌 **{title}** — {views:,} views {net_text}"
+            )
+
+        # Update next run & last interval views
+        c.execute(
+            "UPDATE intervals SET next_run=?, last_interval_views=? WHERE video_id=?",
+            ((now + timedelta(hours=hours)).isoformat(), views, vid)
+        )
+        db.commit()             f"⏳ **{title}** — {diff:,} views away from **{next_m:,}**!"
             )
 
     # ----------------------------------
@@ -200,53 +252,6 @@ async def kst_tracker():
         if ping:
             await up_channel.send(ping)
 
-
-# ======================================================
-# CUSTOM INTERVAL TRACKER
-# (now includes net increase + timestamp)
-# ======================================================
-@tasks.loop(minutes=5)
-async def interval_tracker():
-    now = now_kst()
-
-    c.execute("SELECT video_id, hours, next_run, last_views FROM intervals")
-    rows = c.fetchall()
-
-    for vid, hours, next_run, last_saved_views in rows:
-        run_at = datetime.fromisoformat(next_run)
-
-        if now < run_at:
-            continue
-
-        views = await fetch_views(vid)
-        if views is None:
-            continue
-
-        # Net gain
-        net = f"(+{views - last_saved_views:,})" if last_saved_views is not None else ""
-
-        # Update next run time
-        next_time = now + timedelta(hours=hours)
-        c.execute(
-            "UPDATE intervals SET next_run=?, last_views=? WHERE video_id=?",
-            (next_time.isoformat(), views, vid)
-        )
-        db.commit()
-
-        # Find video info
-        c.execute("SELECT title, alert_channel FROM videos WHERE video_id=?", (vid,))
-        r = c.fetchone()
-        if not r:
-            continue
-
-        title, ch_id = r
-        channel = bot.get_channel(ch_id)
-
-        if channel:
-            await channel.send(
-                f"⏱️ **Interval Update** ({now.strftime('%Y-%m-%d %H:%M KST')})\n"
-                f"📊 **{title}** — {views:,} views {net}"
-            )
 
 # ======================================================
 # SLASH COMMANDS — ALL FIXED + FEATURES ADDED
