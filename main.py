@@ -193,50 +193,65 @@ async def kst_tracker():
 # ======================================================
 @tasks.loop(minutes=5)
 async def tracking_loop():
-    for video_id, data in list(tracked_videos.items()):
-        channel_id = data.get("channel_id")
-        interval_hours = data.get("interval_hours")
-        last_interval = data.get("last_interval_time", 0)
-        last_interval_views = data.get("last_interval_views", 0)
-        alert_channel_id = data.get("alert_channel_id")
-        
-        channel = bot.get_channel(channel_id)
-        if channel is None:
+    # Load interval-enabled videos
+    c.execute("SELECT video_id, hours, next_run, last_interval_views FROM intervals")
+    rows = c.fetchall()
+
+    for video_id, hours, next_run, last_interval_views in rows:
+
+        # Skip videos that have no interval set
+        if hours == 0:
             continue
 
-        current_views = await fetch_view_count(video_id)
+        # Convert next_run string to datetime
+        try:
+            next_run_dt = datetime.fromisoformat(next_run)
+        except:
+            next_run_dt = now_kst()
+
+        now = now_kst()
+
+        # Only check interval when scheduled time arrives
+        if now < next_run_dt:
+            continue
+
+        # Fetch video details
+        c.execute("SELECT title, channel_id FROM videos WHERE video_id=?", (video_id,))
+        v = c.fetchone()
+        if not v:
+            continue
+
+        title, channel_id = v
+        channel = bot.get_channel(channel_id)
+        if not channel:
+            continue
+
+        # Fetch current views
+        current_views = await fetch_views(video_id)
         if current_views is None:
             continue
 
-        # Always update DB cache
-        update_video_views(video_id, current_views)
+        # Net increase since last interval
+        net = current_views - last_interval_views if last_interval_views else 0
 
-        now = datetime.utcnow().timestamp()
+        # Send interval update
+        await channel.send(
+            f"⏱️ **Interval Update for {title}**\n"
+            f"📌 **Current Views:** {current_views:,}\n"
+            f"📈 **Net Increase:** +{net:,}\n"
+            f"⏳ **Every:** {hours} hours"
+        )
 
-        # ---- ONLY SEND INTERVAL MESSAGE IF HOURS PASSED ----
-        if interval_hours:
-            if now - last_interval >= interval_hours * 3600:
-                
-                # Calculate net increase since last interval
-                net_increase = current_views - last_interval_views
+        # Save new schedule + update stored views
+        next_time = now + timedelta(hours=float(hours))
 
-                embed = discord.Embed(
-                    title=f"⏱ Interval Update for {video_id}",
-                    color=discord.Color.blurple()
-                )
-                embed.add_field(name="Current Views", value=f"{current_views:,}")
-                embed.add_field(name="Net Increase", value=f"+{net_increase:,}")
-                embed.add_field(name="Interval", value=f"{interval_hours} hours")
+        c.execute("""
+            UPDATE intervals
+            SET next_run=?, last_interval_views=?
+            WHERE video_id=?
+        """, (next_time.isoformat(), current_views, video_id))
 
-                await channel.send(embed=embed)
-
-                # Reset interval time + views
-                tracked_videos[video_id]["last_interval_time"] = now
-                tracked_videos[video_id]["last_interval_views"] = current_views
-                save_tracking_data()
-
-        # ---- Check milestones here (safe to leave unchanged) ----
-        await check_milestones(video_id, current_views, alert_channel_id)
+        db.commit()
 
 # ======================================================
 # SLASH COMMANDS (unchanged)
