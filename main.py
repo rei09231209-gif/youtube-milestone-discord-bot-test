@@ -179,8 +179,7 @@ async def kst_tracker():
                         ch_id, msg = ping_data.split("|", 1)
                         mil_ch = bot.get_channel(int(ch_id))
                         if mil_ch:
-                            await mil_ch.send(f"📼 **{title}** crossed **{million}M views**!
-{msg}")
+                            await mil_ch.send(f"📼 **{title}** crossed **{million}M views**!{msg}")
                         await db_execute("UPDATE milestones SET last_million=? WHERE video_id=?", (million, vid))
                     except: pass
         
