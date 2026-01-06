@@ -303,6 +303,7 @@ async def serverlist(interaction: discord.Interaction):
     except:
         await interaction.response.send_message("❌ Error fetching server list", ephemeral=True)
 
+
 @bot.tree.command(name="forcecheck", description="Force check channel videos NOW")
 async def forcecheck(interaction: discord.Interaction):
     await interaction.response.defer()
