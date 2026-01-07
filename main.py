@@ -106,7 +106,7 @@ def estimate_eta(current_views, target_views):
     return f"{int(hours/24)}d"
 
 # ========================================
-# FLASK (Render Keepalive)
+# FLASK (Render Port Binding FIXED)
 # ========================================
 app = Flask(__name__)
 
@@ -119,7 +119,9 @@ def health():
     return {"db": "sqlite3", "status": "running"}
 
 def run_flask():
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    port = int(os.getenv("PORT", 10000))  # Render assigns this
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    print(f"🌐 Flask running on port {port}")
 
 # ========================================
 # DISCORD BOT
