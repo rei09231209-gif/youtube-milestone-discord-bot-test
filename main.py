@@ -214,19 +214,25 @@ async def kst_tracker():
 # ========================================
 # KST-PERFECT INTERVAL TRACKER (Fixed 30min delay)
 # ========================================
-
 @tasks.loop(minutes=1)
 async def tracking_loop():
     try:
-        now_kst = now_kst()
-        intervals = await db_execute("SELECT video_id, hours, next_run, last_interval_views, last_interval_run FROM intervals WHERE hours > 0", fetch=True)
+        now_kst_time = now_kst()  # ✅ FUNCTION CALL (your existing function)
+        
+        intervals = await db_execute("""
+            SELECT video_id, hours, next_run, last_interval_views, last_interval_run 
+            FROM intervals WHERE hours > 0
+        """, fetch=True)
         
         for vid, hours, next_run_str, last_interval_views, last_interval_run in intervals or []:
-            if not next_run_str: continue
+            if not next_run_str: 
+                continue
                 
             try:
                 next_run_kst = datetime.fromisoformat(next_run_str).replace(tzinfo=KST)
-                if now_kst.replace(second=0, microsecond=0) >= next_run_kst.replace(second=0, microsecond=0):
+                # Execute if due (KST perfect timing)
+                if now_kst_time.replace(second=0, microsecond=0) >= next_run_kst.replace(second=0, microsecond=0):
+                    
                     video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), True)
                     if not video: continue
                     title, ch_id = video[0]
@@ -238,26 +244,30 @@ async def tracking_loop():
                     if views is None: continue
                     
                     net = views - (last_interval_views or 0)
-                    next_time_kst = now_kst + timedelta(hours=hours)
+                    next_time_kst = now_kst_time + timedelta(hours=hours)
                     
-                    # ✅ SINGLE LINE - NO SYNTAX ERRORS
-                    embed_msg = f"⏱️ **{title}** Interval\n📊 {views:,} **(+{net:,})**\n⏳ Next: **{next_time_kst.strftime('%H:%M KST')}**"
+                    # ✅ SINGLE LINE - Your exact style
+                    msg = f"⏱️ **{title}** Interval\n📊 {views:,} **(+{net:,})**\n⏳ Next: **{next_time_kst.strftime('%H:%M KST')}**"
                     
                     try:
-                        await channel.send(embed_msg)
-                        print(f"✅ Interval sent: {title} at {now_kst.strftime('%H:%M KST')}")
+                        await channel.send(msg)
+                        print(f"✅ Interval: {title} at {now_kst_time.strftime('%H:%M KST')}")
                     except Exception as e:
-                        print(f"❌ Interval send failed: {e}")
+                        print(f"❌ Send failed: {e}")
                     
-                    await db_execute("UPDATE intervals SET next_run=?, last_views=?, last_interval_views=?, last_interval_run=? WHERE video_id=?", 
-                                   (next_time_kst.isoformat(), views, views, now_kst.isoformat(), vid))
+                    await db_execute("""
+                        UPDATE intervals SET next_run=?, last_views=?, last_interval_views=?, 
+                        last_interval_run=? WHERE video_id=? 
+                    """, (next_time_kst.isoformat(), views, views, now_kst_time.isoformat(), vid))
+                    
             except (ValueError, TypeError):
+                # Fix broken timestamps
                 next_time_kst = now_kst() + timedelta(hours=hours)
-                await db_execute("UPDATE intervals SET next_run=? WHERE video_id=?", (next_time_kst.isoformat(), vid))
+                await db_execute("UPDATE intervals SET next_run=? WHERE video_id=?", 
+                               (next_time_kst.isoformat(), vid))
                 
     except Exception as e:
         print(f"❌ KST Interval Error: {e}")
-
             
 # ========================================
 # 16 SLASH COMMANDS - ALL FIXED
