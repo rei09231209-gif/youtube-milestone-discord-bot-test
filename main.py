@@ -529,14 +529,13 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Sync failed: {e}")
     
-    # Initialize intervals with KST timestamps
-    now_kst = now_kst()
-    intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0 AND next_run IS NULL OR next_run = ''", fetch=True)
+    now_kst_time = now_kst()
+    intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0 AND (next_run IS NULL OR next_run = '')", fetch=True)
     for vid, hours in intervals or []:
-        next_time = now_kst + timedelta(hours=hours)
+        next_time = now_kst_time + timedelta(hours=hours)
         await db_execute("UPDATE intervals SET next_run=? WHERE video_id=?", (next_time.isoformat(), vid))
-        print(f"🔄 Initialized interval: {vid} -> {next_time.strftime('%H:%M KST')}")
-    
+        print(f"🔄 KST Interval init: {vid} → {next_time.strftime('%H:%M KST')}")
+
     kst_tracker.start()
     tracking_loop.start()
     Thread(target=run_flask, daemon=True).start()
