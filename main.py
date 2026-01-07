@@ -179,7 +179,7 @@ async def kst_tracker():
                         ch_id, msg = ping_data.split("|", 1)
                         mil_ch = bot.get_channel(int(ch_id))
                         if mil_ch:
-                            await mil_ch.send(f"🏆 **{title}** crossed **{million}M views**!\n{msg}")
+                            await mil_ch.send(f"💽 **{title}** crossed **{million}M views**!\n{msg}")
                         await db_execute("UPDATE milestones SET last_million=? WHERE video_id=?", (million, vid))
                     except: 
                         pass
@@ -351,7 +351,7 @@ async def setmilestone(interaction: discord.Interaction, video_id: str, channel:
     try:
         await db_execute("INSERT OR REPLACE INTO milestones (video_id, ping) VALUES (?, ?)",
                         (video_id, f"{channel.id}|{ping}"))
-        await interaction.response.send_message(f"🏆 Milestone alerts set → <#{channel.id}>")
+        await interaction.response.send_message(f"💽 Milestone alerts set → <#{channel.id}>")
     except:
         await interaction.response.send_message("❌ Failed to set milestone", ephemeral=True)
 
@@ -364,7 +364,7 @@ async def reachedmilestones(interaction: discord.Interaction):
         if not data:
             await interaction.followup.send("📭 No milestones reached yet")
         else:
-            await interaction.followup.send("🏆 **Reached milestones:**\n" + "\n".join(f"• **{t}**: {m}M" for t, m in data))
+            await interaction.followup.send("💽 **Reached milestones:**\n" + "\n".join(f"• **{t}**: {m}M" for t, m in data))
     except:
         await interaction.followup.send("❌ Failed to fetch milestones")
 
@@ -457,7 +457,7 @@ async def servercheck(interaction: discord.Interaction):
             response += "📭 No videos\n"
         
         if milestones and any(m[1] > 0 for m in milestones):
-            response += "\n**🏆 Milestones:**\n" + "\n".join(f"• **{t}**: {m}M" for t, m, _ in milestones if m > 0) + "\n"
+            response += "\n**💽 Milestones:**\n" + "\n".join(f"• **{t}**: {m}M" for t, m, _ in milestones if m > 0) + "\n"
         
         if intervals:
             response += "\n**⏱️ Intervals:**\n" + "\n".join(f"• **{t}**: {h}hr" for t, h in intervals) + "\n"
