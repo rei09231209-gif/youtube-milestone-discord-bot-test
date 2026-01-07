@@ -402,20 +402,15 @@ async def setinterval(interaction: discord.Interaction, video_id: str, hours: fl
         await ensure_video_exists(video_id, str(interaction.guild.id))
         now = now_kst()
         next_time = now + timedelta(hours=hours)
-        await db_execute("UPDATE intervals SET hours=?, next_run=? WHERE video_id=?",
-                        (hours, next_time.isoformat(), video_id))
+        # 🔥 FIX: Reset ALL timing fields for clean start
+        await db_execute("""
+            UPDATE intervals SET 
+                hours=?, next_run=?, last_interval_views=0, last_interval_run=NULL 
+            WHERE video_id=?
+        """, (hours, next_time.isoformat(), video_id))
         await interaction.response.send_message(f"⏱️ **{hours}hr** intervals → **{next_time.strftime('%H:%M KST')}**")
     except:
         await interaction.response.send_message("❌ Failed to set interval", ephemeral=True)
-
-@bot.tree.command(name="disableinterval", description="Stop interval updates")
-@app_commands.describe(video_id="Video ID")
-async def disableinterval(interaction: discord.Interaction, video_id: str):
-    try:
-        await db_execute("UPDATE intervals SET hours=0 WHERE video_id=?", (video_id,))
-        await interaction.response.send_message("⏹️ Interval updates stopped")
-    except:
-        await interaction.response.send_message("❌ Failed to disable interval", ephemeral=True)
 
 @bot.tree.command(name="setupcomingmilestonesalert", description="Upcoming milestones summary (<100K + ETA)")
 @app_commands.describe(channel="Summary channel", ping="Optional ping message")
@@ -530,13 +525,18 @@ async def on_ready():
         print(f"✅ Synced {len(synced)} commands globally")
     except Exception as e:
         print(f"❌ Sync failed: {e}")
-    
+
+    # 🔥 FIXED: Reset ALL intervals to future times
     now_kst_time = now_kst()
-    intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0 AND (next_run IS NULL OR next_run = '')", fetch=True)
+    intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0", fetch=True)
     for vid, hours in intervals or []:
         next_time = now_kst_time + timedelta(hours=hours)
-        await db_execute("UPDATE intervals SET next_run=? WHERE video_id=?", (next_time.isoformat(), vid))
-        print(f"🔄 KST Interval init: {vid} → {next_time.strftime('%H:%M KST')}")
+        await db_execute("""
+            UPDATE intervals SET 
+                next_run=?, last_interval_views=0, last_interval_run=NULL 
+            WHERE video_id=?
+        """, (next_time.isoformat(), vid))
+        print(f"🔥 FIXED: {vid} → Next: {next_time.strftime('%H:%M KST')}")
 
     kst_tracker.start()
     tracking_loop.start()
