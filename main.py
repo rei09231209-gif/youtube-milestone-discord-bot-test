@@ -2,12 +2,13 @@ import discord
 from discord.ext import tasks, commands
 from discord import app_commands
 import os
+import asyncio
 from flask import Flask
 from threading import Thread
 from dotenv import load_dotenv
-import pytz
 from datetime import datetime, timedelta
-from utils import *
+import pytz
+from utils import *  # ALL UTILITIES
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -29,6 +30,10 @@ def health():
     return {"db": "sqlite3", "status": "running"}
 def run_flask():
     app.run(host="0.0.0.0", port=PORT, debug=False)
+
+# Declare trackers BEFORE commands (FIX!)
+kst_tracker = tasks.loop(minutes=1)(kst_tracker)
+tracking_loop = tasks.loop(minutes=5)(tracking_loop)
 
 # KST TRACKER (00:00, 12:00, 17:00 KST)
 @tasks.loop(minutes=1)
