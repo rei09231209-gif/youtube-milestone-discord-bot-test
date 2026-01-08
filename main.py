@@ -217,30 +217,41 @@ async def kst_tracker():
 # ========================================
 # INTERVAL TRACKER (KST Perfect)
 # ========================================
-@tasks.loop(minutes=1)
+ 
+@tasks.loop(minutes=1)  # 🔥 1 MINUTE CHECKS
 async def tracking_loop():
+    print("🔄 Interval check running...")  # DEBUG LOG
     try:
         now_kst_time = now_kst()
-        
         intervals = await db_execute("""
-            SELECT video_id, hours, next_run, last_interval_views, last_interval_run 
+            SELECT video_id, hours, next_run, last_interval_views 
             FROM intervals WHERE hours > 0
         """, fetch=True)
         
-        for vid, hours, next_run_str, last_interval_views, last_interval_run in intervals or []:
+        print(f"Found {len(intervals)} intervals")  # DEBUG
+        
+        for vid, hours, next_run_str, last_interval_views in intervals or []:
+            print(f"Checking {vid}: next_run={next_run_str}")  # DEBUG
+            
             if not next_run_str: 
+                print(f"Skipping {vid} - no next_run")
                 continue
             
             try:
                 next_run_kst = datetime.fromisoformat(next_run_str).replace(tzinfo=KST)
+                print(f"{vid}: now={now_kst_time.strftime('%H:%M')} vs next={next_run_kst.strftime('%H:%M')}")  # DEBUG
+                
                 if now_kst_time.replace(second=0, microsecond=0) >= next_run_kst.replace(second=0, microsecond=0):
+                    print(f"🚀 SENDING for {vid}!")  # DEBUG
                     
                     video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), True)
                     if not video: continue
                     title, ch_id = video[0]
                     
                     channel = bot.get_channel(int(ch_id))
-                    if not channel: continue
+                    if not channel: 
+                        print(f"No channel for {vid}")
+                        continue
                     
                     views = await fetch_views(vid)
                     if views is None: continue
@@ -250,24 +261,18 @@ async def tracking_loop():
                     
                     msg = f"⏱️ **{title}** Interval\n📊 {views:,} **(+{net:,})**\n⏳ Next: **{next_time_kst.strftime('%H:%M KST')}**"
                     
-                    try:
-                        await channel.send(msg)
-                        print(f"✅ Interval: {title} at {now_kst_time.strftime('%H:%M KST')}")
-                    except Exception as e:
-                        print(f"❌ Send failed: {e}")
+                    await channel.send(msg)
+                    print(f"✅ SENT: {title} at {now_kst_time.strftime('%H:%M KST')}")
                     
                     await db_execute("""
-                        UPDATE intervals SET next_run=?, last_views=?, last_interval_views=?, 
-                        last_interval_run=? WHERE video_id=? 
-                    """, (next_time_kst.isoformat(), views, views, now_kst_time.isoformat(), vid))
+                        UPDATE intervals SET next_run=?, last_interval_views=? WHERE video_id=?
+                    """, (next_time_kst.isoformat(), views, vid))
                     
-            except (ValueError, TypeError):
-                next_time_kst = now_kst() + timedelta(hours=hours)
-                await db_execute("UPDATE intervals SET next_run=? WHERE video_id=?", 
-                               (next_time_kst.isoformat(), vid))
+            except Exception as e:
+                print(f"Error processing {vid}: {e}")
                 
     except Exception as e:
-        print(f"❌ KST Interval Error: {e}")
+        print(f"❌ tracking_loop ERROR: {e}")
 
 # ========================================
 # ALL 16 COMMANDS (40060 SAFE)
@@ -555,31 +560,43 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 # ========================================
 @bot.event
 async def on_ready():
-    await init_db()
+    print("🔄 Starting init_db...")
+    try:
+        await init_db()
+        print("✅ DB OK")
+    except Exception as e:
+        print(f"❌ DB CRASH: {e}")
+        return
+    
     print(f"🚀 {bot.user} online - KST: {now_kst().strftime('%H:%M:%S')}")
     
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} commands globally")
+        print(f"✅ Synced {len(synced)} commands")
     except Exception as e:
-        print(f"❌ Sync failed: {e}")
-
-    # 🔥 RESET ALL INTERVALS TO KST PERFECT
-    now_kst_time = now_kst()
-    intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0", fetch=True)
-    for vid, hours in intervals or []:
-        next_time = now_kst_time + timedelta(hours=hours)
-        await db_execute("""
-            UPDATE intervals SET 
-                next_run=?, last_interval_views=0, last_interval_run=NULL 
-            WHERE video_id=?
-        """, (next_time.isoformat(), vid))
-        print(f"🔥 FIXED: {vid} → Next: {next_time.strftime('%H:%M KST')}")
-
-    kst_tracker.start()
-    tracking_loop.start()
+        print(f"⚠️ Sync failed (non-critical): {e}")
+    
+    # SAFE interval reset
+    try:
+        now_kst_time = now_kst()
+        intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0", fetch=True)
+        print(f"Found {len(intervals)} intervals")
+        for vid, hours in intervals or []:
+            next_time = now_kst_time + timedelta(hours=hours)
+            await db_execute("UPDATE intervals SET next_run=? WHERE video_id=?", (next_time.isoformat(), vid))
+        print("✅ Intervals reset")
+    except Exception as e:
+        print(f"⚠️ Interval reset failed: {e}")
+    
+    try:
+        kst_tracker.start()
+        tracking_loop.start()
+        print("✅ Tasks started")
+    except Exception as e:
+        print(f"❌ Task start failed: {e}")
+    
     Thread(target=run_flask, daemon=True).start()
-    print("🎯 PRODUCTION READY - All 16 commands + KST perfect timing!")
+    print("🎯 Bot ready!")
 
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
