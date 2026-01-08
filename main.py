@@ -394,21 +394,26 @@ async def removemilestones(interaction: discord.Interaction, video_id: str):
         await interaction.response.send_message("❌ Failed to clear alerts", ephemeral=True)
 
 @bot.tree.command(name="setinterval", description="Set custom interval updates")
-@app_commands.describe(video_id="Video ID", hours="Hours between checks (1-24)")
-async def setinterval(interaction: discord.Interaction, video_id: str, hours: float):
+@app_commands.describe(video_id="Video ID", minutes="Minutes between checks (15-1440)")
+async def setinterval(interaction: discord.Interaction, video_id: str, minutes: float):
     try:
-        if hours < 1 or hours > 24:
-            return await interaction.response.send_message("❌ Hours must be 1-24", ephemeral=True)
+        if minutes < 15 or minutes > 1440:  # 15min to 24hr
+            return await interaction.response.send_message("❌ Minutes must be 15-1440 (24hr)", ephemeral=True)
+        
+        hours = minutes / 60.0
         await ensure_video_exists(video_id, str(interaction.guild.id))
         now = now_kst()
-        next_time = now + timedelta(hours=hours)
-        # 🔥 FIX: Reset ALL timing fields for clean start
+        next_time = now + timedelta(minutes=minutes)
+        
         await db_execute("""
             UPDATE intervals SET 
                 hours=?, next_run=?, last_interval_views=0, last_interval_run=NULL 
             WHERE video_id=?
         """, (hours, next_time.isoformat(), video_id))
-        await interaction.response.send_message(f"⏱️ **{hours}hr** intervals → **{next_time.strftime('%H:%M KST')}**")
+        
+        await interaction.response.send_message(
+            f"⏱️ **{minutes}min** ({hours:.1f}hr) intervals → **{next_time.strftime('%H:%M KST')}**"
+        )
     except:
         await interaction.response.send_message("❌ Failed to set interval", ephemeral=True)
 
