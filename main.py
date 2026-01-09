@@ -47,7 +47,7 @@ async def safe_response(interaction, content, ephemeral=False):
             print(f"Failed to respond: {content}")
 
 # INTERVAL TRACKER
-  @tasks.loop(minutes=1)
+@tasks.loop(minutes=1)
 async def tracking_loop():
     now = now_kst()
     print(f"🔥 LOOP ALIVE: {now.strftime('%H:%M:%S KST')}")  # PROOF IT RUNS
