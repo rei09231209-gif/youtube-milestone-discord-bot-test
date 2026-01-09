@@ -50,23 +50,16 @@ async def safe_response(interaction, content, ephemeral=False):
 @tasks.loop(minutes=1)
 async def tracking_loop():
     now = now_kst()
+    intervals = await db_execute("SELECT video_id, hours, first_run_time FROM intervals WHERE hours > 0", fetch=True)
     
-    # Get intervals with base_time
-    intervals = await db_execute(
-        "SELECT video_id, hours, base_time FROM intervals WHERE hours > 0", fetch=True
-    )
-    
-    for vid, hours, base_time_iso in intervals or []:
+    for vid, hours, first_run_iso in intervals or []:
         try:
-            base_time = datetime.fromisoformat(base_time_iso).replace(tzinfo=KST)
-            interval_minutes = int(hours * 60)
+            first_run = datetime.fromisoformat(first_run_iso).replace(tzinfo=KST)
+            minutes_elapsed = int((now - first_run).total_seconds() / 60)
+            interval_mins = int(hours * 60)  # 15 for 0.25hr
             
-            # Calculate exact schedule: base_time + N * interval
-            minutes_since_base = int((now - base_time).total_seconds() / 60)
-            expected_run = base_time + timedelta(minutes=(minutes_since_base // interval_minutes) * interval_minutes)
-            
-            # Trigger if NOW is within 1min of expected time
-            if abs((now - expected_run).total_seconds()) <= 60:
+            # Fire on exact multiples: 15, 30, 45, 60...
+            if minutes_elapsed % interval_mins == 0 and minutes_elapsed > 0:
                 video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
                 if video:
                     title, ch_id = video[0]
@@ -74,20 +67,15 @@ async def tracking_loop():
                     if channel:
                         views = await fetch_views(vid)
                         if views:
-                            next_run = expected_run + timedelta(minutes=interval_minutes)
+                            next_mins = ((minutes_elapsed // interval_mins) + 1) * interval_mins
+                            next_time = first_run + timedelta(minutes=next_mins)
                             await channel.send(
-                                f"⏱️ **{title}** ({hours}hr clockwise)\n"
+                                f"⏱️ **{title}** ({hours}hr)\n"
                                 f"📊 **{views:,} views**\n"
-                                f"⏳ **Next**: {next_run.strftime('%H:%M KST')}"
-                            )
-                            
-                            # Update DB
-                            await db_execute(
-                                "UPDATE intervals SET last_interval_run=?, next_run=? WHERE video_id=?",
-                                (now.isoformat(), next_run.isoformat(), vid)
+                                f"⏳ **Next**: {next_time.strftime('%H:%M KST')}"
                             )
         except:
-            continue                          
+            continue
           
 # KST TRACKER (00:00, 12:00, 17:00)
 @tasks.loop(minutes=1)
@@ -224,23 +212,16 @@ async def removemilestones(interaction: discord.Interaction, video_id: str):
     await db_execute("UPDATE milestones SET ping='' WHERE video_id=?", (video_id,))
     await safe_response(interaction, "✅ Milestone alerts cleared")
 
-@bot.tree.command(name="setinterval", description="Set interval (15min+)")
-@app_commands.describe(video_id="Video ID", hours="Hours (0.25=15min)")
+@bot.tree.command(name="setinterval", description="Set interval")
 async def setinterval(interaction: discord.Interaction, video_id: str, hours: float):
-    if hours < 0.25:
-        return await safe_response(interaction, "❌ Minimum 15 minutes (0.25hr)", True)
-    
+    if hours < 0.25: return await safe_response(interaction, "❌ Min 15min")
     await ensure_video_exists(video_id, str(interaction.guild.id))
+    
     now = now_kst()
+    await db_execute("UPDATE intervals SET hours=?, first_run_time=? WHERE video_id=?", 
+                    (hours, now.isoformat(), video_id))
     
-    # Store BASE TIME (when set) + interval
-    base_time = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
-    await db_execute(
-        "UPDATE intervals SET hours=?, base_time=?, next_run=? WHERE video_id=?",
-        (hours, base_time.isoformat(), (base_time + timedelta(hours=hours)).isoformat(), video_id)
-    )
-    
-    await safe_response(interaction, f"⏱️ **{hours}hr** clockwise → **{(base_time + timedelta(hours=hours)).strftime('%H:%M KST')}**")
+    await safe_response(interaction, f"⏱️ **{hours}hr** intervals started!")
 
 @bot.tree.command(name="disableinterval", description="Stop intervals")
 @app_commands.describe(video_id="Video ID")
