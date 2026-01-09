@@ -49,66 +49,45 @@ async def safe_response(interaction, content, ephemeral=False):
 # INTERVAL TRACKER
 @tasks.loop(minutes=1)
 async def tracking_loop():
-    try:
-        now = now_kst()
-        intervals = await db_execute("SELECT video_id, hours, last_interval_run FROM intervals WHERE hours > 0", fetch=True)
-        
-        for vid, hours, last_run in intervals or []:
-            should_run = True
+    now = now_kst()
+    
+    # Get intervals with base_time
+    intervals = await db_execute(
+        "SELECT video_id, hours, base_time FROM intervals WHERE hours > 0", fetch=True
+    )
+    
+    for vid, hours, base_time_iso in intervals or []:
+        try:
+            base_time = datetime.fromisoformat(base_time_iso).replace(tzinfo=KST)
+            interval_minutes = int(hours * 60)
             
-            # Skip if not enough time passed since last run
-            if last_run:
-                try:
-                    last_time = datetime.fromisoformat(last_run).replace(tzinfo=KST)
-                    elapsed_seconds = (now - last_time).total_seconds()
-                    required_seconds = hours * 3600  # 15min = 900s
-                    
-                    if elapsed_seconds < required_seconds - 60:  # 1min tolerance
-                        should_run = False
-                except:
-                    should_run = True  # First run
+            # Calculate exact schedule: base_time + N * interval
+            minutes_since_base = int((now - base_time).total_seconds() / 60)
+            expected_run = base_time + timedelta(minutes=(minutes_since_base // interval_minutes) * interval_minutes)
             
-            if not should_run:
-                continue
-
-            # SEND INTERVAL MESSAGE
-            video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
-            if not video:
-                continue
-            title, ch_id = video[0]
-
-            channel = bot.get_channel(int(ch_id))
-            if not channel:
-                continue
-
-            views = await fetch_views(vid)
-            if views is None:
-                continue
-
-            # Calculate net gain
-            prev_data = await db_execute("SELECT last_interval_views FROM intervals WHERE video_id=?", (vid,), fetch=True)
-            prev_views = prev_data[0][0] if prev_data else 0
-            net = views - prev_views
-
-            # Calculate next run
-            next_time = now + timedelta(hours=hours)
-
-            # SEND MESSAGE
-            await channel.send(
-                f"⏱️ **{title}** ({hours}hr interval)\n"
-                f"📊 **{views:,} views** **(+{net:,})**\n"
-                f"⏳ **Next**: {next_time.strftime('%H:%M KST')}"
-            )
-            print(f"✅ INTERVAL: {title} | {now.strftime('%H:%M')} → Next {next_time.strftime('%H:%M')}")
-
-            # Reset timer
-            await db_execute(
-                "UPDATE intervals SET last_interval_views=?, last_interval_run=?, next_run=? WHERE video_id=?",
-                (views, now.isoformat(), next_time.isoformat(), vid)
-            )
-            
-    except Exception as e:
-        print(f"❌ Tracking error: {e}")                          
+            # Trigger if NOW is within 1min of expected time
+            if abs((now - expected_run).total_seconds()) <= 60:
+                video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
+                if video:
+                    title, ch_id = video[0]
+                    channel = bot.get_channel(int(ch_id))
+                    if channel:
+                        views = await fetch_views(vid)
+                        if views:
+                            next_run = expected_run + timedelta(minutes=interval_minutes)
+                            await channel.send(
+                                f"⏱️ **{title}** ({hours}hr clockwise)\n"
+                                f"📊 **{views:,} views**\n"
+                                f"⏳ **Next**: {next_run.strftime('%H:%M KST')}"
+                            )
+                            
+                            # Update DB
+                            await db_execute(
+                                "UPDATE intervals SET last_interval_run=?, next_run=? WHERE video_id=?",
+                                (now.isoformat(), next_run.isoformat(), vid)
+                            )
+        except:
+            continue                          
           
 # KST TRACKER (00:00, 12:00, 17:00)
 @tasks.loop(minutes=1)
@@ -254,11 +233,14 @@ async def setinterval(interaction: discord.Interaction, video_id: str, hours: fl
     await ensure_video_exists(video_id, str(interaction.guild.id))
     now = now_kst()
     
-    # ✅ DON'T SET last_interval_run on command - let loop handle first run
-    await db_execute("UPDATE intervals SET hours=?, next_run=? WHERE video_id=?",
-                    (hours, (now + timedelta(hours=hours)).isoformat(), video_id))
+    # Store BASE TIME (when set) + interval
+    base_time = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
+    await db_execute(
+        "UPDATE intervals SET hours=?, base_time=?, next_run=? WHERE video_id=?",
+        (hours, base_time.isoformat(), (base_time + timedelta(hours=hours)).isoformat(), video_id)
+    )
     
-    await safe_response(interaction, f"⏱️ **{hours}hr** intervals → **{(now + timedelta(hours=hours)).strftime('%H:%M KST')}**")
+    await safe_response(interaction, f"⏱️ **{hours}hr** clockwise → **{(base_time + timedelta(hours=hours)).strftime('%H:%M KST')}**")
 
 @bot.tree.command(name="disableinterval", description="Stop intervals")
 @app_commands.describe(video_id="Video ID")
