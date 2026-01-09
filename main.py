@@ -54,56 +54,61 @@ async def tracking_loop():
         intervals = await db_execute("SELECT video_id, hours, last_interval_run FROM intervals WHERE hours > 0", fetch=True)
         
         for vid, hours, last_run in intervals or []:
-            # Check if 15min (or hours) elapsed since last run
             should_run = True
+            
+            # Skip if not enough time passed since last run
             if last_run:
                 try:
                     last_time = datetime.fromisoformat(last_run).replace(tzinfo=KST)
                     elapsed_seconds = (now - last_time).total_seconds()
-                    required_seconds = hours * 3600  # 0.25hr = 900 seconds
+                    required_seconds = hours * 3600  # 15min = 900s
                     
-                    # Only run if enough time passed (±60s tolerance)
-                    if elapsed_seconds < required_seconds - 60:
+                    if elapsed_seconds < required_seconds - 60:  # 1min tolerance
                         should_run = False
                 except:
-                    should_run = True  # First run or bad timestamp
+                    should_run = True  # First run
             
             if not should_run:
                 continue
 
-            # SEND INTERVAL UPDATE
+            # SEND INTERVAL MESSAGE
             video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
             if not video:
                 continue
             title, ch_id = video[0]
 
             channel = bot.get_channel(int(ch_id))
-            if channel:
-                views = await fetch_views(vid)
-                if views:
-                    # Calculate net gain
-                    prev_data = await db_execute("SELECT last_interval_views FROM intervals WHERE video_id=?", (vid,), fetch=True)
-                    prev_views = prev_data[0][0] if prev_data else 0
-                    net = views - prev_views
+            if not channel:
+                continue
 
-                    # Next run time
-                    next_time = now + timedelta(hours=hours)
-                    
-                    await channel.send(
-                        f"⏱️ **{title}** ({hours}hr interval)\n"
-                        f"📊 **{views:,} views** **(+{net:,})**\n"
-                        f"⏳ **Next**: {next_time.strftime('%H:%M KST')}"
-                    )
-                    
-                    # Reset timer
-                    await db_execute(
-                        "UPDATE intervals SET last_interval_views=?, last_interval_run=?, next_run=? WHERE video_id=?",
-                        (views, now.isoformat(), next_time.isoformat(), vid)
-                    )
-                    print(f"✅ INTERVAL SENT: {title} at {now.strftime('%H:%M')} → Next {next_time.strftime('%H:%M')}")
-                    
+            views = await fetch_views(vid)
+            if views is None:
+                continue
+
+            # Calculate net gain
+            prev_data = await db_execute("SELECT last_interval_views FROM intervals WHERE video_id=?", (vid,), fetch=True)
+            prev_views = prev_data[0][0] if prev_data else 0
+            net = views - prev_views
+
+            # Calculate next run
+            next_time = now + timedelta(hours=hours)
+
+            # SEND MESSAGE
+            await channel.send(
+                f"⏱️ **{title}** ({hours}hr interval)\n"
+                f"📊 **{views:,} views** **(+{net:,})**\n"
+                f"⏳ **Next**: {next_time.strftime('%H:%M KST')}"
+            )
+            print(f"✅ INTERVAL: {title} | {now.strftime('%H:%M')} → Next {next_time.strftime('%H:%M')}")
+
+            # Reset timer
+            await db_execute(
+                "UPDATE intervals SET last_interval_views=?, last_interval_run=?, next_run=? WHERE video_id=?",
+                (views, now.isoformat(), next_time.isoformat(), vid)
+            )
+            
     except Exception as e:
-        print(f"❌ Interval error: {e}")                          
+        print(f"❌ Tracking error: {e}")                          
           
 # KST TRACKER (00:00, 12:00, 17:00)
 @tasks.loop(minutes=1)
