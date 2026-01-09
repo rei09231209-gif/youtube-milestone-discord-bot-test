@@ -216,20 +216,18 @@ async def removemilestones(interaction: discord.Interaction, video_id: str):
 @app_commands.describe(video_id="Video ID", hours="Hours (0.25=15min)")
 async def setinterval(interaction: discord.Interaction, video_id: str, hours: float):
     if hours < 0.25:
-        return await safe_response(interaction, "❌ Minimum 15 minutes (0.25hr)", True)
+        await safe_response(interaction, "❌ Minimum 15 minutes (0.25hr)", True)
+        return
     
-    # ENSURE VIDEO EXISTS
     await ensure_video_exists(video_id, str(interaction.guild.id))
     
-    # FORCE SET INTERVAL
     result = await db_execute(
         "INSERT OR REPLACE INTO intervals (video_id, hours, next_run) VALUES (?, ?, ?)",
         (video_id, hours, now_kst().isoformat())
     )
     
     count = len(await db_execute("SELECT * FROM intervals WHERE hours > 0", fetch=True))
-    await safe_response(interaction, f"✅ **{hours}hr** interval set for `{video_id}`
-📊 **{count}** total intervals")
+    await safe_response(interaction, f"✅ {hours}hr interval set for `{video_id}`\n📊 {count} total intervals")
 
 @bot.tree.command(name="dbcheck", description="Debug intervals")
 async def dbcheck(interaction: discord.Interaction):
