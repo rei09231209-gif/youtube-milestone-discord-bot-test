@@ -49,33 +49,35 @@ async def safe_response(interaction, content, ephemeral=False):
 # INTERVAL TRACKER
 @tasks.loop(minutes=1)
 async def tracking_loop():
-    now = now_kst()
-    intervals = await db_execute("SELECT video_id, hours, first_run_time FROM intervals WHERE hours > 0", fetch=True)
-    
-    for vid, hours, first_run_iso in intervals or []:
-        try:
-            first_run = datetime.fromisoformat(first_run_iso).replace(tzinfo=KST)
-            minutes_elapsed = int((now - first_run).total_seconds() / 60)
-            interval_mins = int(hours * 60)  # 15 for 0.25hr
-            
-            # Fire on exact multiples: 15, 30, 45, 60...
-            if minutes_elapsed % interval_mins == 0 and minutes_elapsed > 0:
-                video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
-                if video:
-                    title, ch_id = video[0]
-                    channel = bot.get_channel(int(ch_id))
-                    if channel:
-                        views = await fetch_views(vid)
-                        if views:
-                            next_mins = ((minutes_elapsed // interval_mins) + 1) * interval_mins
-                            next_time = first_run + timedelta(minutes=next_mins)
-                            await channel.send(
-                                f"⏱️ **{title}** ({hours}hr)\n"
-                                f"📊 **{views:,} views**\n"
-                                f"⏳ **Next**: {next_time.strftime('%H:%M KST')}"
-                            )
-        except:
-            continue
+    try:
+        intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0", fetch=True)
+        print(f"🔍 CHECKING {len(intervals)} intervals")  # DEBUG
+        
+        for vid, hours in intervals:
+            # FORCE FIRE EVERY 'hours' - IGNORE LAST RUN TIME
+            video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
+            if video:
+                title, ch_id = video[0]
+                channel = bot.get_channel(int(ch_id))
+                if channel:
+                    views = await fetch_views(vid)
+                    if views is not None:
+                        # SIMPLE NET GAIN
+                        await channel.send(f"⏱️ **{title}** ({hours}hr)\n📊 **{views:,} views**")
+                        print(f"✅ FIRED {title}")
+                        
+                        # SET LAST RUN TO PREVENT SPAM
+                        await db_execute("UPDATE intervals SET last_interval_run=? WHERE video_id=?", 
+                                       (now_kst().isoformat(), vid))
+                    else:
+                        print(f"❌ fetch_views failed: {vid}")
+                else:
+                    print(f"❌ Channel not found: {ch_id}")
+            else:
+                print(f"❌ Video not found: {vid}")
+                
+    except Exception as e:
+        print(f"❌ Loop crashed: {e}")                   
           
 # KST TRACKER (00:00, 12:00, 17:00)
 @tasks.loop(minutes=1)
