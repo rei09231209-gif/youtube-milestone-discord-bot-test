@@ -46,43 +46,33 @@ async def safe_response(interaction, content, ephemeral=False):
         except:
             print(f"Failed to respond: {content}")
 
-# INTERVAL TRACKER 
-@tasks.loop(minutes=1)
+# INTERVAL TRACKER
+  @tasks.loop(minutes=1)
 async def tracking_loop():
     now = now_kst()
-    intervals = await db_execute("SELECT video_id, hours, next_run FROM intervals WHERE hours > 0", fetch=True)
+    print(f"🔥 LOOP ALIVE: {now.strftime('%H:%M:%S KST')}")  # PROOF IT RUNS
     
-    for vid, hours, next_run_iso in intervals or []:
-        # ONLY trigger if NOW >= scheduled next_run time
-        try:
-            next_run = datetime.fromisoformat(next_run_iso).replace(tzinfo=KST)
-            if now < next_run:
-                continue  # Not time yet
-                
-        except:
-            continue  # Bad timestamp
-
-        # EXECUTE INTERVAL
+    # FORCE TEST - FIRE IMMEDIATELY ONCE
+    intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0", fetch=True)
+    print(f"🔍 Found {len(intervals or [])} intervals")
+    
+    if intervals:
+        vid, hours = intervals[0]  # FIRST INTERVAL ONLY
+        print(f"🎯 TESTING {vid} ({hours}hr)")
+        
+        # SIMULATE INTERVAL MESSAGE
         video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
-        if not video: continue
-        title, ch_id = video[0]
-
-        channel = bot.get_channel(int(ch_id))
-        if channel:
-            views = await fetch_views(vid)
-            if views:
-                prev_data = await db_execute("SELECT last_interval_views FROM intervals WHERE video_id=?", (vid,), fetch=True)
-                prev_views = prev_data[0][0] if prev_data else 0
-                net = views - prev_views
-
-                # SCHEDULE ACTUAL NEXT RUN
-                next_time = now + timedelta(hours=hours)
-                
-                await channel.send(f"⏱️ **{title}** ({hours}hr)\n📊 **{views:,}** **(+{net:,})**\n⏳ **Next**: {next_time.strftime('%H:%M KST')}")
-                
-                # UPDATE next_run for PRECISE scheduling
-                await db_execute("UPDATE intervals SET next_run=?, last_interval_views=?, last_interval_run=? WHERE video_id=?",
-                               (next_time.isoformat(), views, now.isoformat(), vid))           
+        if video:
+            title, ch_id = video[0]
+            channel = bot.get_channel(int(ch_id))
+            if channel:
+                await channel.send(f"🧪 **DEBUG** {title} - Loop WORKS!")
+                print(f"✅ DEBUG SENT to {ch_id}")
+        
+        # RESET for normal operation
+        next_time = now + timedelta(hours=hours)
+        await db_execute("UPDATE intervals SET next_run=? WHERE video_id=?", 
+                        (next_time.isoformat(), vid))              
           
 # KST TRACKER (00:00, 12:00, 17:00)
 @tasks.loop(minutes=1)
