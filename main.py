@@ -212,16 +212,35 @@ async def removemilestones(interaction: discord.Interaction, video_id: str):
     await db_execute("UPDATE milestones SET ping='' WHERE video_id=?", (video_id,))
     await safe_response(interaction, "✅ Milestone alerts cleared")
 
-@bot.tree.command(name="setinterval", description="Set interval")
+@bot.tree.command(name="setinterval", description="Set interval (15min+)")
+@app_commands.describe(video_id="Video ID", hours="Hours (0.25=15min)")
 async def setinterval(interaction: discord.Interaction, video_id: str, hours: float):
-    if hours < 0.25: return await safe_response(interaction, "❌ Min 15min")
+    if hours < 0.25:
+        return await safe_response(interaction, "❌ Minimum 15 minutes (0.25hr)", True)
+    
+    # ENSURE VIDEO EXISTS
     await ensure_video_exists(video_id, str(interaction.guild.id))
     
-    now = now_kst()
-    await db_execute("UPDATE intervals SET hours=?, first_run_time=? WHERE video_id=?", 
-                    (hours, now.isoformat(), video_id))
+    # FORCE SET INTERVAL
+    result = await db_execute(
+        "INSERT OR REPLACE INTO intervals (video_id, hours, next_run) VALUES (?, ?, ?)",
+        (video_id, hours, now_kst().isoformat())
+    )
     
-    await safe_response(interaction, f"⏱️ **{hours}hr** intervals started!")
+    count = len(await db_execute("SELECT * FROM intervals WHERE hours > 0", fetch=True))
+    await safe_response(interaction, f"✅ **{hours}hr** interval set for `{video_id}`
+📊 **{count}** total intervals")
+
+@bot.tree.command(name="dbcheck", description="Debug intervals")
+async def dbcheck(interaction: discord.Interaction):
+    intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0", fetch=True)
+    videos = await db_execute("SELECT video_id FROM videos", fetch=True)
+    await safe_response(interaction, 
+        f"Intervals (hours>0): **{len(intervals)}**
+"
+        f"All videos: **{len(videos)}**
+"
+        f"Data: {intervals}")
 
 @bot.tree.command(name="disableinterval", description="Stop intervals")
 @app_commands.describe(video_id="Video ID")
