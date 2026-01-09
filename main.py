@@ -234,10 +234,8 @@ async def dbcheck(interaction: discord.Interaction):
     intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0", fetch=True)
     videos = await db_execute("SELECT video_id FROM videos", fetch=True)
     await safe_response(interaction, 
-        f"Intervals (hours>0): **{len(intervals)}**
-"
-        f"All videos: **{len(videos)}**
-"
+        f"Intervals (hours>0): **{len(intervals)}**\n"
+        f"All videos: **{len(videos)}**\n"
         f"Data: {intervals}")
 
 @bot.tree.command(name="disableinterval", description="Stop intervals")
