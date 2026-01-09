@@ -46,71 +46,44 @@ async def safe_response(interaction, content, ephemeral=False):
         except:
             print(f"Failed to respond: {content}")
 
-# 🔥 INTERVALS LIKE KST - EXACT HOUR BOUNDARIES
-@tasks.loop(minutes=1)
+#INTERVAL TRACKER
+@tasks.loop(minutes=1)  # Same as KST
 async def tracking_loop():
-    try:
-        now = now_kst()
-        
-        # CHECK EVERY MINUTE - TRIGGER ONLY AT EXACT TIMES
-        intervals = await db_execute("SELECT video_id, hours, last_interval_run FROM intervals WHERE hours > 0", fetch=True)
-        
-        for vid, hours, last_interval_run in intervals or []:
-            # EXACTLY LIKE KST - CHECK CURRENT MINUTE == 0
-            should_run = False
-            
-            if last_interval_run:
-                try:
-                    last_time = datetime.fromisoformat(last_interval_run).replace(tzinfo=KST)
-                    # Calculate exact next run time
-                    hours_since_last = (now - last_time).total_seconds() / 3600
-                    if abs(hours_since_last - hours) < 0.0167:  # Within 1 minute of exact hour
-                        should_run = True
-                except:
-                    pass
-            else:
-                # First run - trigger immediately
-                should_run = True
-            
-            if not should_run:
-                continue
-
-            # EXECUTE UPDATE (SAME AS BEFORE)
-            video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
-            if not video: continue
-            title, ch_id = video[0]
-
-            channel = bot.get_channel(int(ch_id))
-            if not channel: continue
-
-            views = await fetch_views(vid)
-            if views is None: continue
-
-            # Get previous views for net gain
-            prev_data = await db_execute("SELECT last_interval_views FROM intervals WHERE video_id=?", (vid,), fetch=True)
-            last_interval_views = prev_data[0][0] if prev_data else 0
-            net = views - last_interval_views
-
-            next_time = now + timedelta(hours=hours)
-
+    now = now_kst()
+    intervals = await db_execute("SELECT video_id, hours, last_interval_run FROM intervals WHERE hours > 0", fetch=True)
+    
+    for vid, hours, last_run in intervals or []:
+        # KST-STYLE: Trigger when EXACTLY 'hours' elapsed (±2min)
+        if last_run:
             try:
-                await channel.send(
-                    f"⏱️ **{title}** ({hours}hr)\n"
-                    f"📊 **{views:,} views** **(+{net:,})**\n"
-                    f"⏳ Next: **{next_time.strftime('%Y-%m-%d %H:%M KST')}**"
-                )
-                print(f"✅ INTERVAL HIT: {title} | +{net:,} | Next: {next_time}")
+                last_time = datetime.fromisoformat(last_run).replace(tzinfo=KST)
+                elapsed_hours = (now - last_time).total_seconds() / 3600
+                # EXACT match within 2 minutes (like KST minute=0)
+                if not (hours - 0.033 <= elapsed_hours <= hours + 0.033):
+                    continue
             except:
-                pass
+                pass  # First run
+        
+        # EXECUTE (every ~hours from PREVIOUS run)
+        video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
+        if not video: continue
+        title, ch_id = video[0]
+        
+        channel = bot.get_channel(int(ch_id))
+        if channel:
+            views = await fetch_views(vid)
+            if views:
+                prev_data = await db_execute("SELECT last_interval_views FROM intervals WHERE video_id=?", (vid,), fetch=True)
+                prev_views = prev_data[0][0] if prev_data else 0
+                net = views - prev_views
+                
+                next_time = now + timedelta(hours=hours)
+                await channel.send(f"⏱️ **{title}** ({hours}hr)\n📊 {views:,} (+{net:,})\n⏳ Next: {next_time.strftime('%H:%M KST')}")
+                
+                # RESET to EXACT next time
+                await db_execute("UPDATE intervals SET last_interval_views=?, last_interval_run=? WHERE video_id=?", 
+                               (views, now.isoformat(), vid))
 
-            # RESET TIMER EXACTLY
-            await db_execute(
-                "UPDATE intervals SET next_run=?, last_views=?, last_interval_views=?, last_interval_run=? WHERE video_id=?",
-                (next_time.isoformat(), views, views, now.isoformat(), vid)
-            )
-            
-    except Exception as e:
-        print(f"❌ Interval Error: {e}")
             
 # KST TRACKER (00:00, 12:00, 17:00)
 @tasks.loop(minutes=1)
