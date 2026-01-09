@@ -7,14 +7,15 @@ from flask import Flask
 from threading import Thread
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
-from utils import *  # ✅ PERFECTLY COMPATIBLE
+import pytz
+from utils import *  # PERFECTLY COMPATIBLE
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
 
 if not BOT_TOKEN:
-    raise ValueError("❌ Missing BOT_TOKEN")
+    raise ValueError("Missing BOT_TOKEN")
 
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix='!', intents=intents)
@@ -24,13 +25,15 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return {"status": "alive", "time": now_kst().isoformat()}
+
 @app.route("/health")
 def health():
     return {"db": "sqlite3", "status": "running"}
+
 def run_flask():
     app.run(host="0.0.0.0", port=PORT, debug=False)
 
-# 🔥 SAFE RESPONSE (40060-proof)
+# Safe response handler (40060-proof)
 async def safe_response(interaction, content, ephemeral=False):
     try:
         if interaction.response.is_done():
@@ -41,9 +44,9 @@ async def safe_response(interaction, content, ephemeral=False):
         try:
             await interaction.followup.send(content, ephemeral=ephemeral)
         except:
-            print(f"❌ Failed to respond: {content}")
+            print(f"Failed to respond: {content}")
 
-# 🔥 INTERVAL TRACKER FIRST (1min precision = NO DELAYS)
+# INTERVAL TRACKER - FIXED TIMING (1min precision)
 @tasks.loop(minutes=1)
 async def tracking_loop():
     try:
@@ -56,51 +59,56 @@ async def tracking_loop():
                 try:
                     last_time = datetime.fromisoformat(last_interval_run).replace(tzinfo=KST)
                     elapsed_hours = (now - last_time).total_seconds() / 3600
-                    if elapsed_hours < hours * 0.95:  # 5% tolerance
+                    if elapsed_hours < hours * 0.95:
                         should_run = False
                 except:
                     pass
             
-            if not should_run: continue
+            if not should_run:
+                continue
 
             video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
-            if not video: continue
+            if not video:
+                continue
             title, ch_id = video[0]
 
             channel = bot.get_channel(int(ch_id))
-            if not channel: continue
+            if not channel:
+                continue
 
             views = await fetch_views(vid)
-            if views is None: continue
+            if views is None:
+                continue
 
             net = views - (last_interval_views or 0)
             next_time = now + timedelta(hours=hours)
 
             try:
-                await channel.send(f"⏱️ **{title}** ({hours}hr)
-📊 {views:,} **(+{net:,})**
-⏳ Next: {next_time.strftime('%m/%d %H:%M KST')}")
-            except: pass
+                await channel.send(f"⏱️ **{title}** ({hours}hr)\n📊 {views:,} **(+{net:,})**\n⏳ Next: {next_time.strftime('%m/%d %H:%M KST')}")
+            except:
+                pass
 
-            await db_execute("UPDATE intervals SET next_run=?, last_views=?, last_interval_views=?, last_interval_run=? WHERE video_id=?",
+            await db_execute("UPDATE intervals SET next_run=?, last_views=?, last_interval_views=?, last_interval_run=? WHERE video_id=?", 
                            (next_time.isoformat(), views, views, now.isoformat(), vid))
     except Exception as e:
-        print(f"❌ Interval Error: {e}")
+        print(f"Interval Error: {e}")
 
-# 🔥 KST TRACKER (00:00, 12:00, 17:00)
+# KST TRACKER (00:00, 12:00, 17:00)
 @tasks.loop(minutes=1)
 async def kst_tracker():
     try:
         now = now_kst()
-        if now.hour not in TRACK_HOURS or now.minute != 0: return
+        if now.hour not in TRACK_HOURS or now.minute != 0:
+            return
 
-        print(f"🔄 KST Check: {now.strftime('%H:%M KST')}")
+        print(f"KST Check: {now.strftime('%H:%M KST')}")
         videos = await db_execute("SELECT * FROM videos", fetch=True)
 
         for video in videos or []:
             key, vid, title, guild_id, ch_id, alert_ch = video
             views = await fetch_views(vid)
-            if views is None: continue
+            if views is None:
+                continue
 
             kst_data = await db_execute("SELECT kst_last_views FROM intervals WHERE video_id=?", (vid,), fetch=True)
             kst_last = kst_data[0][0] if kst_data and kst_data[0][0] else 0
@@ -109,17 +117,17 @@ async def kst_tracker():
             channel = bot.get_channel(int(alert_ch))
             if channel:
                 try:
-                    await channel.send(f"📅 **{now.strftime('%Y-%m-%d %H:%M KST')}**
-👀 **{title}** — {views:,} views {kst_net}")
-                except: pass
+                    await channel.send(f"📅 **{now.strftime('%Y-%m-%d %H:%M KST')}**\n👀 **{title}** — {views:,} views {kst_net}")
+                except:
+                    pass
 
             await db_execute("UPDATE intervals SET kst_last_views=?, kst_last_run=?, last_views=? WHERE video_id=?", 
                            (views, now.isoformat(), views, vid))
     except Exception as e:
-        print(f"❌ KST Tracker Error: {e}")
+        print(f"KST Tracker Error: {e}")
 
-# 🔥 ALL 16 COMMANDS (utils.py COMPATIBLE)
-@bot.tree.command(name="botcheck", description="🟢 Bot status")
+# 🔥 ALL 16 COMMANDS - CLEAN SYNTAX
+@bot.tree.command(name="botcheck", description="Bot status")
 async def botcheck(interaction: discord.Interaction):
     now = now_kst()
     vcount = len(await db_execute("SELECT * FROM videos", fetch=True))
@@ -128,16 +136,12 @@ async def botcheck(interaction: discord.Interaction):
     interval_status = "🟢" if tracking_loop.is_running() else "🔴"
     
     await safe_response(interaction, 
-        f"✅ **KST**: {now.strftime('%Y-%m-%d %H:%M:%S')}
-"
-        f"📊 **{vcount}** videos | **{icount}** intervals
-"
-        f"🔄 KST: {kst_status} | Interval: {interval_status}
-"
-        f"💾 DB: {DB_PATH}
-🌐 PORT: {PORT}")
+        f"✅ **KST**: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"📊 **{vcount}** videos | **{icount}** intervals\n"
+        f"🔄 KST: {kst_status} | Interval: {interval_status}\n"
+        f"💾 DB: {DB_PATH}\n🌐 PORT: {PORT}")
 
-@bot.tree.command(name="addvideo", description="Add video")
+@bot.tree.command(name="addvideo", description="Add video to track")
 @app_commands.describe(video_id="YouTube video ID", title="Video title")
 async def addvideo(interaction: discord.Interaction, video_id: str, title: str = ""):
     await ensure_video_exists(video_id, str(interaction.guild.id), title, interaction.channel.id, interaction.channel.id)
@@ -159,9 +163,7 @@ async def listvideos(interaction: discord.Interaction):
     if not videos:
         await safe_response(interaction, "📭 No videos in this channel")
     else:
-        await safe_response(interaction, "📋 **Channel videos:**
-" + "
-".join(f"• {v[0]}" for v in videos))
+        await safe_response(interaction, "📋 **Channel videos:**\n" + "\n".join(f"• {v[0]}" for v in videos))
 
 @bot.tree.command(name="serverlist", description="Server videos")
 async def serverlist(interaction: discord.Interaction):
@@ -169,11 +171,9 @@ async def serverlist(interaction: discord.Interaction):
     if not videos:
         await safe_response(interaction, "📭 No server videos")
     else:
-        await safe_response(interaction, "📋 **Server videos:**
-" + "
-".join(f"• {v[0]}" for v in videos))
+        await safe_response(interaction, "📋 **Server videos:**\n" + "\n".join(f"• {v[0]}" for v in videos))
 
-@bot.tree.command(name="forcecheck", description="Force check NOW")
+@bot.tree.command(name="forcecheck", description="Force check now")
 async def forcecheck(interaction: discord.Interaction):
     await interaction.response.defer()
     videos = await db_execute("SELECT title, video_id FROM videos WHERE channel_id=?", (interaction.channel.id,), fetch=True)
@@ -220,9 +220,7 @@ async def reachedmilestones(interaction: discord.Interaction):
     if not data:
         await interaction.followup.send("📭 No milestones reached")
     else:
-        await interaction.followup.send("💿 **Reached:**
-" + "
-".join(f"• **{t}**: {m}M" for t, m in data))
+        await interaction.followup.send("💿 **Reached:**\n" + "\n".join(f"• **{t}**: {m}M" for t, m in data))
 
 @bot.tree.command(name="removemilestones", description="Clear milestone alerts")
 @app_commands.describe(video_id="Video ID")
@@ -269,9 +267,7 @@ async def upcoming(interaction: discord.Interaction):
                 eta = estimate_eta(views, next_m)
                 lines.append(f"⏳ **{title}**: **{diff:,}** to {next_m:,} **(ETA: {eta})**")
     if lines:
-        await interaction.followup.send(f"📊 **Upcoming (<100K)** ({now.strftime('%H:%M KST')}):
-" + "
-".join(lines))
+        await interaction.followup.send(f"📊 **Upcoming (<100K)** ({now.strftime('%H:%M KST')}):\n" + "\n".join(lines))
     else:
         await interaction.followup.send("📭 No videos within 100K")
 
@@ -280,14 +276,10 @@ async def servercheck(interaction: discord.Interaction):
     await interaction.response.defer()
     guild_id = str(interaction.guild.id)
     videos = await db_execute("SELECT title, video_id, channel_id, alert_channel FROM videos WHERE guild_id=?", (guild_id,), fetch=True)
-    response = f"**{interaction.guild.name} Overview** 📊
-
-**📹 Videos:** {len(videos)}
-"
+    response = f"**{interaction.guild.name} Overview** 📊\n\n**📹 Videos:** {len(videos)}\n"
     for title, vid, ch_id, alert_ch in videos[:10]:
         ch = bot.get_channel(int(ch_id)).mention if bot.get_channel(int(ch_id)) else f"#{ch_id}"
-        response += f"• **{title}** → {ch}
-"
+        response += f"• **{title}** → {ch}\n"
     await interaction.followup.send(response)
 
 @bot.tree.error
@@ -295,26 +287,24 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     if isinstance(error, app_commands.CommandOnCooldown):
         await safe_response(interaction, f"⏳ Wait {error.retry_after:.1f}s", True)
     else:
-        print(f"❌ Slash Error: {error}")
+        print(f"Slash Error: {error}")
         await safe_response(interaction, "❌ Command failed", True)
 
 @bot.event
 async def on_ready():
     await init_db()
-    print(f"🚀 {bot.user} online - KST: {now_kst().strftime('%H:%M:%S')}")
+    print(f"{bot.user} online - KST: {now_kst().strftime('%H:%M:%S')}")
 
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash commands")
+        print(f"Synced {len(synced)} slash commands")
     except Exception as e:
-        print(f"⚠️ Sync: {e}")
+        print(f"Sync: {e}")
 
-    # START TRACKERS LAST (after functions defined)
     kst_tracker.start()
     tracking_loop.start()
     Thread(target=run_flask, daemon=True).start()
-    print("🎯 ALL SYSTEMS GO! 16 commands + Perfect KST + Intervals")
+    print("🎯 ALL SYSTEMS GO!")
 
 if __name__ == "__main__":
     bot.run(BOT_TOKEN)
-#Blood trail 109
