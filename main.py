@@ -388,7 +388,7 @@ async def upcoming(interaction: discord.Interaction):
 @bot.tree.command(name="servercheck", description="Server overview")
 async def servercheck(interaction: discord.Interaction):
     await interaction.response.defer()
-        guild_id = str(interaction.guild.id)
+    guild_id = str(interaction.guild.id)
     videos = await db_execute("SELECT title, video_id, channel_id, alert_channel FROM videos WHERE guild_id=?", (guild_id,), fetch=True) or []
     response = f"**{interaction.guild.name} Overview** 📊\n\n**📹 Videos:** {len(videos)}\n"
     for title, vid, ch_id, alert_ch in videos[:10]:
