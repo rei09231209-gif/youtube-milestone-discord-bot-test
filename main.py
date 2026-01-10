@@ -405,22 +405,22 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 
 @bot.event
 async def on_ready():
-    await init_db()
-    log.info(f"{bot.user} online - KST: {now_kst().strftime('%H:%M:%S')}")
-
     try:
+        # ✅ FIXED: Proper async init_db call
+        await asyncio.sleep(1)  # Wait for Discord ready
+        await asyncio.create_task(init_db())  # Non-blocking DB init
+        
+        log.info(f"{bot.user} online - KST: {now_kst().strftime('%H:%M:%S')}")
+        
         synced = await bot.tree.sync()
         log.info(f"Synced {len(synced)} slash commands")
+        
+        await asyncio.sleep(2)  # Stabilize
+        
+        kst_tracker.start()
+        interval_checker.start()
+        Thread(target=run_flask, daemon=True).start()
+        
+        log.info("🎯 ALL SYSTEMS GO! Bot + Flask + Tasks LIVE!")
     except Exception as e:
-        log.error(f"Sync failed: {e}")
-
-    kst_tracker.start()
-    interval_checker.start()
-    Thread(target=run_flask, daemon=True).start()
-    log.info("🎯 ALL SYSTEMS GO! Intervals + KST + Milestones LIVE!")
-
-if __name__ == "__main__":
-    try:
-        bot.run(BOT_TOKEN)
-    except Exception as e:
-        log.error(f"Bot startup failed: {e}")
+        log.error(f"on_ready failed: {e}")
