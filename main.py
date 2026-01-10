@@ -105,7 +105,7 @@ async def kst_tracker():
                             pass
                     await db_execute("UPDATE milestones SET last_million=? WHERE video_id=?", (current_million, vid))
     except:
-        pass  
+        pass
 
         # UPCOMING MILESTONES SUMMARY
         upcoming_data = await db_execute("SELECT guild_id, channel_id, ping FROM upcoming_alerts", fetch=True) or []
