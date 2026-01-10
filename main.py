@@ -388,4 +388,39 @@ async def upcoming(interaction: discord.Interaction):
 async def servercheck(interaction: discord.Interaction):
     await interaction.response.defer()
     guild_id = str(interaction.guild.id)
-    videos = await db
+    videos = await db_execute("SELECT title, video_id, channel_id, alert_channel FROM videos WHERE guild_id=?", (guild_id,), fetch=True) or []
+    response = f"**{interaction.guild.name} Overview** 📊\n\n**📹 Videos:** {len(videos)}\n"
+    for title, vid, ch_id, alert_ch in videos[:10]:
+        ch = bot.get_channel(int(ch_id)).mention if bot.get_channel(int(ch_id)) else f"#{ch_id}"
+        response += f"• **{title}** → {ch}\n"
+    await interaction.followup.send(response)
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        await safe_response(interaction, f"⏳ Wait {error.retry_after:.1f}s", True)
+    else:
+        log.error(f"Slash Error: {error}")
+        await safe_response(interaction, "❌ Command failed", True)
+
+@bot.event
+async def on_ready():
+    await init_db()
+    log.info(f"{bot.user} online - KST: {now_kst().strftime('%H:%M:%S')}")
+
+    try:
+        synced = await bot.tree.sync()
+        log.info(f"Synced {len(synced)} slash commands")
+    except Exception as e:
+        log.error(f"Sync failed: {e}")
+
+    kst_tracker.start()
+    interval_checker.start()
+    Thread(target=run_flask, daemon=True).start()
+    log.info("🎯 ALL SYSTEMS GO! Intervals + KST + Milestones LIVE!")
+
+if __name__ == "__main__":
+    try:
+        bot.run(BOT_TOKEN)
+    except Exception as e:
+        log.error(f"Bot startup failed: {e}")
