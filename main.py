@@ -79,12 +79,11 @@ async def kst_tracker():
             kst_net = f"(+{views-kst_last:,})" if kst_last else ""
 
             channel = bot.get_channel(int(alert_ch))
-            if channel:
-                await channel.send(f"📅 **{now.strftime('%Y-%m-%d %H:%M KST')}**
-👀 **{title}** — {views:,} views {kst_net}")
+if channel:
+    await channel.send(f"📅 **{now.strftime('%Y-%m-%d %H:%M KST')}**\n👀 **{title}** — {views:,} views {kst_net}")
 
-            await db_execute("UPDATE intervals SET kst_last_views=?, kst_last_run=?, last_views=? WHERE video_id=?", 
-                           (views, now.isoformat(), views, vid))
+await db_execute("UPDATE intervals SET kst_last_views=?, kst_last_run=?, last_views=? WHERE video_id=?", 
+               (views, now.isoformat(), views, vid))
 
             # 🔥 MILESTONE CHECK FOR KST (Every 1M+)
             milestone_data = await db_execute("SELECT ping, last_million FROM milestones WHERE video_id=?", (vid,), fetch=True) or []
