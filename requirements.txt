@@ -1,6 +1,5 @@
-discord-lite==0.1.0
+discord.py[self]==2.3.2
 aiosqlite==0.20.0
 Flask==3.0.2
 python-dotenv==1.0.1
 pytz==2024.1
-requests
