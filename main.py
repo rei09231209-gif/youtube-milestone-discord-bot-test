@@ -9,7 +9,8 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import pytz
 import logging
-from utils import *  # Your utils.py
+# ✅ FIXED - Import safely
+from utils import now_kst, db_execute, fetch_views, estimate_eta, ensure_video_exists
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -33,7 +34,8 @@ def home():
     return {"status": "alive", "time": now_kst().isoformat()}
 
 def run_flask():
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+    from waitress import serve  # ✅ Render-safe
+    serve(app, host="0.0.0.0", port=PORT)
 
 # Safe response handler
 async def safe_response(interaction, content, ephemeral=False):
