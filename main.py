@@ -79,26 +79,29 @@ async def kst_tracker():
             kst_net = f"(+{views-kst_last:,})" if kst_last else ""
 
             channel = bot.get_channel(int(alert_ch))
-if channel:
-    await channel.send(f"📅 **{now.strftime('%Y-%m-%d %H:%M KST')}**\n👀 **{title}** — {views:,} views {kst_net}")
+            if channel:
+                await channel.send(f"📅 **{now.strftime('%Y-%m-%d %H:%M KST')}**\n👀 **{title}** — {views:,} views {kst_net}")
 
-await db_execute("UPDATE intervals SET kst_last_views=?, kst_last_run=?, last_views=? WHERE video_id=?", (views, now.isoformat(), views, vid))
-milestone_data = await db_execute("SELECT ping, last_million FROM milestones WHERE video_id=?", (vid,), fetch=True) or []
-if milestone_data:
-    ping_str, last_million = milestone_data[0]
-    current_million = views // 1_000_000
-    if current_million > (last_million or 0):
-        if ping_str:
-            try:
-                ping_channel_id, role_ping = ping_str.split('|')
-                ping_channel = bot.get_channel(int(ping_channel_id))
-                if ping_channel:
-                    await ping_channel.send(f"🎉 **{video_title[:30]}** hit **{current_million}M VIEWS!** 🚀\n📊 **{views:,} views** | {channel_name}\n{role_ping}")
-            except:
-                pass
-        await db_execute("UPDATE milestones SET last_million=? WHERE video_id=?", (current_million, vid))
+            await db_execute("UPDATE intervals SET kst_last_views=?, kst_last_run=?, last_views=? WHERE video_id=?", 
+                           (views, now.isoformat(), views, vid))
+            
+            # MILESTONE CHECK
+            milestone_data = await db_execute("SELECT ping, last_million FROM milestones WHERE video_id=?", (vid,), fetch=True) or []
+            if milestone_data:
+                ping_str, last_million = milestone_data[0]
+                current_million = views // 1_000_000
+                if current_million > (last_million or 0):
+                    if ping_str:
+                        try:
+                            ping_channel_id, role_ping = ping_str.split('|')
+                            ping_channel = bot.get_channel(int(ping_channel_id))
+                            if ping_channel:
+                                await ping_channel.send(f"🎉 **{title[:30]}** hit **{current_million}M VIEWS!** 🚀\n📊 **{views:,} views** | {title}\n{role_ping}")
+                        except:
+                            pass
+                    await db_execute("UPDATE milestones SET last_million=? WHERE video_id=?", (current_million, vid))
 
-        # UPCOMING MILESTONES SUMMARY
+        # UPCOMING MILESTONES (outside video loop)
         upcoming_data = await db_execute("SELECT guild_id, channel_id, ping FROM upcoming_alerts", fetch=True) or []
         for guild_id, ch_id, ping_role in upcoming_data:
             channel = bot.get_channel(int(ch_id))
@@ -117,8 +120,7 @@ if milestone_data:
                             except:
                                 upcoming.append(f"⏳ **{title}**: **{diff:,}** to {next_m:,}")
                 if upcoming:
-                    message = (f"📊 **UPCOMING <100K** ({now.strftime('%H:%M KST')}):\n" + 
-                              "\n".join(upcoming) + f"\n\n🔔 {ping_role}")
+                    message = f"📊 **UPCOMING <100K** ({now.strftime('%H:%M KST')}):\n" + "\n".join(upcoming) + f"\n\n🔔 {ping_role}"
                     await channel.send(message)
     except:
         pass
