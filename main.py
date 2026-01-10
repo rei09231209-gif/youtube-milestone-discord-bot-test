@@ -9,30 +9,25 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import pytz
 import logging
-from utils import *  # Your utils.py
+from utils import *
 
-# Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-log = logging.getLogger("YouTubeBot")
-
+# NO LOGGING - Clean console
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
-DB_PATH = "youtube_bot.db"  # ✅ FIXED: Defined DB_PATH
+DB_PATH = "youtube_bot.db"
+
+# DISABLE PyNaCl VOICE WARNING PERMANENTLY
+discord.VoiceClient.warn_nacl = False
 
 if not BOT_TOKEN:
     raise ValueError("Missing BOT_TOKEN")
 
 intents = discord.Intents.default()
-intents.voice_states = False  # ✅ DISABLES VOICE CHECKS
-
+intents.voice_states = False
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-intents = discord.Intents.default()
-intents.message_content = True  # Only if needed for prefix commands
-bot = commands.Bot(command_prefix='!', intents=intents)
-
-# Flask Keepalive - FIXED to run forever
+# Flask Keepalive
 app = Flask(__name__)
 @app.route("/")
 @app.route("/health")
@@ -40,23 +35,18 @@ def home():
     return {"status": "alive", "time": now_kst().isoformat()}
 
 def run_flask():
-    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)  # ✅ FIXED
+    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
 
-# Safe response handler
 async def safe_response(interaction, content, ephemeral=False):
     try:
         if interaction.response.is_done():
             await interaction.followup.send(content, ephemeral=ephemeral)
         else:
             await interaction.response.send_message(content, ephemeral=ephemeral)
-    except Exception as e:
-        log.error(f"Response failed: {e}")
-        try:
-            await interaction.followup.send(content, ephemeral=ephemeral)
-        except:
-            pass
+    except:
+        pass
 
-# 🔥 KST TRACKER (00:00, 12:00, 17:00) + UPCOMING MILESTONES SUMMARY
+# KST TRACKER (00:00, 12:00, 17:00)
 @tasks.loop(minutes=1)
 async def kst_tracker():
     try:
@@ -64,9 +54,7 @@ async def kst_tracker():
         if now.hour not in [0, 12, 17] or now.minute != 0:
             return
 
-        log.info(f"KST Check: {now.strftime('%H:%M KST')}")
         videos = await db_execute("SELECT * FROM videos", fetch=True) or []
-
         for video in videos:
             key, vid, title, guild_id, ch_id, alert_ch = video
             views = await fetch_views(vid)
@@ -79,15 +67,12 @@ async def kst_tracker():
 
             channel = bot.get_channel(int(alert_ch))
             if channel:
-                try:
-                    await channel.send(f"📅 **{now.strftime('%Y-%m-%d %H:%M KST')}**\n👀 **{title}** — {views:,} views {kst_net}")
-                except Exception as e:
-                    log.error(f"KST send failed: {e}")
+                await channel.send(f"📅 **{now.strftime('%Y-%m-%d %H:%M KST')}**\n👀 **{title}** — {views:,} views {kst_net}")
 
             await db_execute("UPDATE intervals SET kst_last_views=?, kst_last_run=?, last_views=? WHERE video_id=?", 
                            (views, now.isoformat(), views, vid))
 
-        # 🔥 UPCOMING MILESTONES SUMMARY (00:00, 12:00, 17:00 KST) + ETA + PING ✅ FIXED
+        # UPCOMING MILESTONES SUMMARY
         upcoming_data = await db_execute("SELECT guild_id, channel_id, ping FROM upcoming_alerts", fetch=True) or []
         for guild_id, ch_id, ping_role in upcoming_data:
             channel = bot.get_channel(int(ch_id))
@@ -109,43 +94,41 @@ async def kst_tracker():
                     message = (f"📊 **UPCOMING <100K** ({now.strftime('%H:%M KST')}):\n" + 
                               "\n".join(upcoming) + f"\n\n🔔 {ping_role}")
                     await channel.send(message)
+    except:
+        pass
 
-    except Exception as e:
-        log.error(f"KST Tracker Error: {e}")
-
-# 🔥 AUTO INTERVAL CHECKER + MILESTONE DETECTION ✅ FIXED
+# INTERVAL CHECKER
 @tasks.loop(minutes=1)
 async def interval_checker():
     try:
-        # ✅ FIXED: Only check bot's guilds
         guild_ids = [str(g.id) for g in bot.guilds]
         intervals = await db_execute(
             "SELECT i.video_id, i.hours, v.guild_id FROM intervals i JOIN videos v ON i.video_id = v.video_id WHERE i.hours > 0 AND v.guild_id IN ({})".format(','.join('?' * len(guild_ids))), 
             guild_ids, fetch=True
         ) or []
-        
+
         for vid, hours, guild_id in intervals:
             video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
             if not video: 
                 continue
             title, ch_id = video[0]
-            
+
             last_run_data = await db_execute("SELECT last_interval_run FROM intervals WHERE video_id=?", (vid,), fetch=True) or []
             if not last_run_data or not last_run_data[0][0]: 
                 continue
-            
+
             try:
                 last_time = datetime.fromisoformat(last_run_data[0][0])
             except:
                 continue
-                
+
             now = now_kst()
             if (now - last_time) >= timedelta(hours=hours):
                 channel = bot.get_channel(int(ch_id))
                 if channel:
                     views = await fetch_views(vid)
                     if views:
-                        # 🔥 MILLION MILESTONE CHECK (1M-5M ONLY)
+                        # MILLION MILESTONE CHECK
                         milestone_data = await db_execute("SELECT ping, last_million FROM milestones WHERE video_id=?", (vid,), fetch=True) or []
                         if milestone_data:
                             ping_str, last_million = milestone_data[0]
@@ -156,28 +139,23 @@ async def interval_checker():
                                         ping_channel_id, role_ping = ping_str.split('|')
                                         ping_channel = bot.get_channel(int(ping_channel_id))
                                         if ping_channel:
-                                            await ping_channel.send(f"🎉 **{title}** HIT **{current_million}M VIEWS!** 🚀\n"
-                                                                  f"📊 **{views:,} total views**\n{role_ping}")
+                                            await ping_channel.send(f"🎉 **{title}** HIT **{current_million}M VIEWS!** 🚀\n📊 **{views:,} total views**\n{role_ping}")
                                     except:
                                         pass
                                 await db_execute("UPDATE milestones SET last_million=? WHERE video_id=?", (current_million, vid))
-                        
-                        # INTERVAL MESSAGE ✅ FIXED: Safe unpacking
+
                         prev_data = await db_execute("SELECT last_interval_views FROM intervals WHERE video_id=?", (vid,), fetch=True) or [(0,)]
                         prev_views = prev_data[0][0]
                         net = views - prev_views
-                        
+
                         next_time = now + timedelta(hours=hours)
-                        await channel.send(f"⏱️ **{title}** ({hours}hr interval)\n"
-                                         f"📊 **{views:,} views** **(+{net:,})**\n"
-                                         f"⏳ **Next**: {next_time.strftime('%H:%M KST')}")
-                        
+                        await channel.send(f"⏱️ **{title}** ({hours}hr interval)\n📊 **{views:,} views** **(+{net:,})**\n⏳ **Next**: {next_time.strftime('%H:%M KST')}")
+
                         await db_execute("UPDATE intervals SET last_interval_views=?, last_interval_run=? WHERE video_id=?", 
                                        (views, now.isoformat(), vid))
-    except Exception as e:
-        log.error(f"Interval checker error: {e}")
+    except:
+        pass
 
-# Task safety checks ✅ FIXED
 @interval_checker.before_loop
 async def before_interval_checker():
     await bot.wait_until_ready()
@@ -186,7 +164,7 @@ async def before_interval_checker():
 async def before_kst_tracker():
     await bot.wait_until_ready()
 
-# 🔥 17 SLASH COMMANDS (All preserved + fixed)
+# 17 SLASH COMMANDS (CLEAN)
 @bot.tree.command(name="botcheck", description="Bot status")
 async def botcheck(interaction: discord.Interaction):
     now = now_kst()
@@ -194,15 +172,8 @@ async def botcheck(interaction: discord.Interaction):
     icount = len(await db_execute("SELECT * FROM intervals WHERE hours > 0", fetch=True) or [])
     kst_status = "🟢" if kst_tracker.is_running() else "🔴"
     interval_status = "🟢" if interval_checker.is_running() else "🔴"
-    
-    await safe_response(interaction, 
-        f"✅ **KST**: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"📊 **{vcount}** videos | **{icount}** intervals\n"
-        f"🔄 KST: {kst_status} | Intervals: {interval_status}\n"
-        f"💾 DB: Connected\n"
-        f"🌐 PORT: {PORT}")
+    await safe_response(interaction, f"✅ **KST**: {now.strftime('%Y-%m-%d %H:%M:%S')}\n📊 **{vcount}** videos | **{icount}** intervals\n🔄 KST: {kst_status} | Intervals: {interval_status}\n💾 DB: Connected\n🌐 PORT: {PORT}")
 
-# [ALL OTHER 16 COMMANDS IDENTICAL TO PREVIOUS VERSION - NO CHANGES NEEDED]
 @bot.tree.command(name="addvideo", description="Add video to track")
 @app_commands.describe(video_id="YouTube video ID", title="Video title")
 async def addvideo(interaction: discord.Interaction, video_id: str, title: str = ""):
@@ -312,11 +283,11 @@ async def checkintervals(interaction: discord.Interaction):
     await interaction.response.defer()
     now = now_kst()
     intervals = await db_execute("SELECT video_id, hours FROM intervals WHERE hours > 0", fetch=True) or []
-    
+
     if not intervals:
         await interaction.followup.send("📭 No active intervals")
         return
-    
+
     sent = 0
     for vid, hours in intervals:
         video = await db_execute("SELECT title, channel_id FROM videos WHERE video_id=?", (vid,), fetch=True)
@@ -324,11 +295,10 @@ async def checkintervals(interaction: discord.Interaction):
         title, ch_id = video[0]
         channel = bot.get_channel(int(ch_id))
         if not channel: continue
-            
+
         views = await fetch_views(vid)
         if views is None: continue
-            
-        # 🔥 MILLION MILESTONE CHECK (1M-5M ONLY)
+
         milestone_data = await db_execute("SELECT ping, last_million FROM milestones WHERE video_id=?", (vid,), fetch=True) or []
         if milestone_data:
             ping_str, last_million = milestone_data[0]
@@ -343,23 +313,20 @@ async def checkintervals(interaction: discord.Interaction):
                     except:
                         pass
                 await db_execute("UPDATE milestones SET last_million=? WHERE video_id=?", (current_million, vid))
-        
-        # INTERVAL NET GAIN
+
         prev_data = await db_execute("SELECT last_interval_views FROM intervals WHERE video_id=?", (vid,), fetch=True) or [(0,)]
         prev_views = prev_data[0][0]
         net = views - prev_views
-        
+
         next_time = now + timedelta(hours=hours)
         try:
-            await channel.send(f"⏱️ **{title}** ({hours}hr interval)\n"
-                             f"📊 **{views:,} views** **(+{net:,})**\n"
-                             f"⏳ **Next**: {next_time.strftime('%H:%M KST')}")
+            await channel.send(f"⏱️ **{title}** ({hours}hr interval)\n📊 **{views:,} views** **(+{net:,})**\n⏳ **Next**: {next_time.strftime('%H:%M KST')}")
             sent += 1
             await db_execute("UPDATE intervals SET last_interval_views=?, last_interval_run=? WHERE video_id=?", 
                            (views, now.isoformat(), vid))
-        except Exception as e:
-            log.error(f"Failed to send interval: {e}")
-    
+        except:
+            pass
+
     await interaction.followup.send(f"✅ Checked **{sent}** intervals")
 
 @bot.tree.command(name="setupcomingmilestonesalert", description="Upcoming alerts at 00:00, 12:00, 17:00 KST")
@@ -407,25 +374,21 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     if isinstance(error, app_commands.CommandOnCooldown):
         await safe_response(interaction, f"⏳ Wait {error.retry_after:.1f}s", True)
     else:
-        log.error(f"Slash Error: {error}")
         await safe_response(interaction, "❌ Command failed", True)
 
 @bot.event
 async def on_ready():
-    try:
-        await init_db()
-        log.info(f"{bot.user} online - KST: {now_kst().strftime('%H:%M:%S')}")
-        
-        synced = await bot.tree.sync()
-        log.info(f"Synced {len(synced)} slash commands")
-        
-        # ✅ FIXED: Wait for Discord connection
-        await asyncio.sleep(2)
-        
-        kst_tracker.start()
-        interval_checker.start()
-        Thread(target=run_flask, daemon=True).start()
-        
-        log.info("🎯 ALL SYSTEMS GO! Bot + Flask + Tasks LIVE!")
-    except Exception as e:
-        log.error(f"on_ready failed: {e}")
+    await init_db()
+    print(f"{bot.user} online - KST: {now_kst().strftime('%H:%M:%S')}")
+
+    synced = await bot.tree.sync()
+    print(f"Synced {len(synced)} slash commands")
+
+    await asyncio.sleep(2)
+    kst_tracker.start()
+    interval_checker.start()
+    Thread(target=run_flask, daemon=True).start()
+    print("🎯 ALL SYSTEMS GO!")
+
+if __name__ == "__main__":
+    asyncio.run(bot.start(BOT_TOKEN))
