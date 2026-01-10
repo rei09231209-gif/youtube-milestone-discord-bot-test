@@ -10,12 +10,25 @@ from datetime import datetime, timedelta
 import pytz
 import logging
 from utils import *
+import shutil
 
 # NO LOGGING - Clean console
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
 DB_PATH = "youtube_bot.db"
+BACKUP_PATH = "/tmp/youtube_bot.db"
+
+if os.path.exists(BACKUP_PATH) and not os.path.exists(DB_PATH):
+    shutil.copy(BACKUP_PATH, DB_PATH)
+    print("✅ Restored DB from backup")
+
+import atexit
+def backup_db():
+    if os.path.exists(DB_PATH):
+        shutil.copy(DB_PATH, BACKUP_PATH)
+        print("✅ DB backed up")
+atexit.register(backup_db)
 
 # DISABLE PyNaCl VOICE WARNING PERMANENTLY
 discord.VoiceClient.warn_nacl = False
