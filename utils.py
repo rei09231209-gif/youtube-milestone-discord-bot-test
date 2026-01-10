@@ -19,9 +19,11 @@ db_lock = asyncio.Lock()
 youtube_semaphore = asyncio.Semaphore(5)
 
 def now_kst():
-    return datetime.now(KST)
-
-TRACK_HOURS = [0, 12, 17]
+    """✅ PURE KST - Independent of ANY server timezone"""
+    import time
+    # UTC timestamp + exactly 9hr offset = Perfect KST everywhere
+    kst_seconds = time.time() + (9 * 3600)  # KST = UTC + 9hr
+    return datetime.fromtimestamp(kst_seconds, tz=pytz.timezone("Asia/Seoul"))
 
 async def init_db():
     """✅ FIX 2: Added guild_id to upcoming_alerts"""
