@@ -407,4 +407,9 @@ async def on_ready():
     print("🎯 ALL SYSTEMS GO!")
 
 if __name__ == "__main__":
+    # 🔥 CRITICAL: Start Flask FIRST for Render port detection
+    Thread(target=run_flask, daemon=True).start()
+    print(f"🚀 Flask started on port {PORT}")
+    
+    # Then Discord bot
     asyncio.run(bot.start(BOT_TOKEN))
