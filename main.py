@@ -161,7 +161,7 @@ async def interval_checker():
                         if milestone_data:
                             ping_str, last_million = milestone_data[0]
                             current_million = views // 1_000_000
-                            if current_million > (last_million or 0) and current_million <= 5:
+                            if current_million > (last_million or 0):
                                 if ping_str:
                                     try:
                                         ping_channel_id, role_ping = ping_str.split('|')
@@ -271,11 +271,11 @@ async def viewsall(interaction: discord.Interaction):
             await db_execute("UPDATE intervals SET last_views=?, kst_last_views=? WHERE video_id=?", (views, views, vid))
             await interaction.followup.send(f"📊 **{title}**: {views:,}")
 
-@bot.tree.command(name="setmilestone", description="Set million milestone alerts (1M-5M)")
+@bot.tree.command(name="setmilestone", description="Set million milestone alerts (<1M)")
 @app_commands.describe(video_id="Video ID", channel="Alert channel", ping="Optional ping")
 async def setmilestone(interaction: discord.Interaction, video_id: str, channel: discord.TextChannel, ping: str = ""):
     await db_execute("INSERT OR REPLACE INTO milestones (video_id, ping) VALUES (?, ?)", (video_id, f"{channel.id}|{ping}"))
-    await safe_response(interaction, f"💿 **Million milestone alerts** → <#{channel.id}> **(1M, 2M, 3M, 4M, 5M)**")
+    await safe_response(interaction, f"💿 **Million milestone alerts** → <#{channel.id}> **(every 1M+)**")
 
 @bot.tree.command(name="reachedmilestones", description="Show reached million milestones")
 async def reachedmilestones(interaction: discord.Interaction):
@@ -334,7 +334,7 @@ async def checkintervals(interaction: discord.Interaction):
         if milestone_data:
             ping_str, last_million = milestone_data[0]
             current_million = views // 1_000_000
-            if current_million > (last_million or 0) and current_million <= 5:
+            if current_million > (last_million or 0):
                 if ping_str:
                     try:
                         ping_channel_id, role_ping = ping_str.split('|')
