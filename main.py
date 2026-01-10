@@ -85,6 +85,23 @@ async def kst_tracker():
             await db_execute("UPDATE intervals SET kst_last_views=?, kst_last_run=?, last_views=? WHERE video_id=?", 
                            (views, now.isoformat(), views, vid))
 
+            milestone_data = await db_execute("SELECT ping, last_million FROM milestones WHERE video_id=?", (vid,), fetch=True) or []
+            if milestone_data:
+               ping_str, last_million = milestone_data[0] current_million = views // 1_000_000
+    if current_million > (last_million or 0):  # Unlimited millions!
+        if ping_str:
+            try:
+                ping_channel_id, role_ping = ping_str.split('|')
+                ping_channel = bot.get_channel(int(ping_channel_id))
+                if ping_channel:
+                    await ping_channel.send(f"🎉 **{title}** HIT **{current_million}M VIEWS!** 🚀
+"
+                                          f"📊 **{views:,} total views** (KST Check)
+{role_ping}")
+            except:
+                pass
+        await db_execute("UPDATE milestones SET last_million=? WHERE video_id=?", (current_million, vid))
+
         # UPCOMING MILESTONES SUMMARY
         upcoming_data = await db_execute("SELECT guild_id, channel_id, ping FROM upcoming_alerts", fetch=True) or []
         for guild_id, ch_id, ping_role in upcoming_data:
