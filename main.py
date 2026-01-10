@@ -208,18 +208,31 @@ async def serverlist(interaction: discord.Interaction):
 
 @bot.tree.command(name="forcecheck", description="Force check now")
 async def forcecheck(interaction: discord.Interaction):
-    await interaction.response.defer()
+    await interaction.response.defer()  # ✅ Keep defer
+    
     videos = await db_execute("SELECT title, video_id FROM videos WHERE channel_id=?", (interaction.channel.id,), fetch=True) or []
     if not videos:
         await interaction.followup.send("⚠️ No videos in this channel")
         return
+    
+    # ✅ FIXED: Single followup with all results
+    results = []
     for title, vid in videos:
         views = await fetch_views(vid)
         if views:
             await db_execute("UPDATE intervals SET last_views=?, kst_last_views=? WHERE video_id=?", (views, views, vid))
-            await interaction.followup.send(f"📊 **{title}**: {views:,}")
+            results.append(f"📊 **{title}**: {views:,}")
         else:
-            await interaction.followup.send(f"❌ **{title}**: fetch failed")
+            results.append(f"❌ **{title}**: fetch failed")
+    
+    # ✅ SINGLE followup - Discord limit fix
+    if results:
+        content = "📊 **Force check results:**
+" + "
+".join(results[:10])  # Max 10
+        await interaction.followup.send(content)
+    else:
+        await interaction.followup.send("❌ No results")
 
 @bot.tree.command(name="views", description="Check video views")
 @app_commands.describe(video_id="YouTube video ID")
