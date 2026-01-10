@@ -24,6 +24,12 @@ if not BOT_TOKEN:
     raise ValueError("Missing BOT_TOKEN")
 
 intents = discord.Intents.default()
+intents.voice_states = False  # ✅ DISABLES VOICE CHECKS
+
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+intents = discord.Intents.default()
+intents.message_content = True  # Only if needed for prefix commands
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 # Flask Keepalive - FIXED to run forever
