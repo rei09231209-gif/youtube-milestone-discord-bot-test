@@ -292,9 +292,8 @@ async def listvideos(interaction: discord.Interaction):
     if not videos:
         await safe_response(interaction, "📭 No videos in this channel")
     else:
-        await safe_response(interaction, "📋 **Channel videos**:
-" + "
-".join(f"• {v[0]}" for v in videos))
+        await safe_response(interaction, f"""📋 **Channel videos**:
+{chr(10).join(f"• {v[0]}" for v in videos)}""")
 
 @bot.tree.command(name="serverlist", description="All server videos")
 @app_commands.describe()
@@ -390,24 +389,16 @@ async def upcoming(interaction: discord.Interaction, ping: str = ""):
             next_m = ((views // 1_000_000) + 1) * 1_000_000
             diff = next_m - views
             if 0 < diff <= 100_000:
-try:
-    growth_rate = await get_real_growth_rate(vid, guild_id)  # ✅ Fixed
-except:
-    growth_rate = 100  # Fallback
-                    hours = (next_m - views) / max(growth_rate, 10)
-                    if hours < 1: eta = f"{int(hours*60)}min"
-                    elif hours < 24: eta = f"{int(hours)}h"
-                    elif hours < 168: eta = f"{int(hours/24)}d"
-                    else: eta = f"{int(hours/24/7)}w"
-                    lines.append(f"⏳ **{title}**: **{diff:,}** to {next_m:,} **(ETA: {eta})**")
-                except:
-                    lines.append(f"⏳ **{title}**: **{diff:,}** to {next_m:,}")
-    if lines:
-        msg = f"📊 **Upcoming <100K** ({now.strftime('%H:%M KST')}):
-" + "
-".join(lines)
-        if ping: msg += f"
-
+    try:
+        growth_rate = await get_real_growth_rate(vid, guild_id)
+        hours = (next_m - views) / max(growth_rate, 10)
+        if hours < 1: eta = f"{int(hours*60)}min"
+        elif hours < 24: eta = f"{int(hours)}h"
+        elif hours < 168: eta = f"{int(hours/24)}d"
+        else: eta = f"{int(hours/24/7)}w"
+        lines.append(f"⏳ **{title}**: **{diff:,}** to {next_m:,} **(ETA: {eta})**")
+    except:
+        lines.append(f"⏳ **{title}**: **{diff:,}** to {next_m:,}")
 🔔 {ping}"
         await interaction.followup.send(msg)
     else:
