@@ -26,15 +26,12 @@ if os.path.exists(BACKUP_PATH) and not os.path.exists(DB_PATH):
 
 # Auto-backup on exit
 import atexit
-async def backup_db():
+def backup_db():
     if os.path.exists(DB_PATH):
         shutil.copy(DB_PATH, BACKUP_PATH)
         print("✅ DB backed up")
 
-def sync_backup():
-    asyncio.run(backup_db())
-
-atexit.register(sync_backup)
+atexit.register(backup_db)  # ✅ Simple sync function
 
 # Disable PyNaCl voice warning
 discord.utils.setup_warn_nacl(False)
@@ -394,7 +391,9 @@ async def upcoming(interaction: discord.Interaction, ping: str = ""):
             diff = next_m - views
             if 0 < diff <= 100_000:
                 try:
-                    growth_rate = await get_real_growth_rate(vid, guild_id)
+    growth_rate = await get_real_growth_rate(vid, guild_id)
+except:
+    growth_rate = 100  # Fallback
                     hours = (next_m - views) / max(growth_rate, 10)
                     if hours < 1: eta = f"{int(hours*60)}min"
                     elif hours < 24: eta = f"{int(hours)}h"
