@@ -33,9 +33,6 @@ def backup_db():
 
 atexit.register(backup_db)
 
-# Disable PyNaCl voice warning
-discord.utils.setup_warn_nacl(False)
-
 if not BOT_TOKEN:
     raise ValueError("Missing BOT_TOKEN")
 
