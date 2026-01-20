@@ -390,8 +390,8 @@ async def upcoming(interaction: discord.Interaction, ping: str = ""):
             next_m = ((views // 1_000_000) + 1) * 1_000_000
             diff = next_m - views
             if 0 < diff <= 100_000:
-                try:
-    growth_rate = await get_real_growth_rate(vid, guild_id)
+try:
+    growth_rate = await get_real_growth_rate(vid, guild_id)  # ✅ Fixed
 except:
     growth_rate = 100  # Fallback
                     hours = (next_m - views) / max(growth_rate, 10)
