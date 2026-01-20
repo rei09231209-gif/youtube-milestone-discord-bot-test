@@ -110,10 +110,8 @@ async def kst_tracker():
             next_m = ((views // 1_000_000) + 1) * 1_000_000
             diff = next_m - views
             if 0 < diff <= 100_000 and guild_id not in guild_upcoming:
-    guild_upcoming[guild_id] = []
+                guild_upcoming[guild_id] = []
             if 0 < diff <= 100_000:
-    # ... rest of code (try/except block)
-
                 try:
                     growth_rate = await get_real_growth_rate(vid, guild_id)
                     hours = diff / max(growth_rate, 10)
@@ -127,7 +125,7 @@ async def kst_tracker():
                         eta = f"{int(hours/24/7)}w"
                     guild_upcoming[guild_id].append(f"⏳ **{title}**: **{diff:,}** to {next_m:,} **(ETA: {eta})**")
                 except:
-                    guild_upcoming[guild_id].append(f"⏳ **{title}**: **{diff:,}** to {next_m:,}")
+                    guild_upcoming[guild_id].append(f"⏳ **{title}**: **{diff:,}** to {next_m,:}")
 
         # SEND UPCOMING SUMMARY PER GUILD
         for guild_id, upcoming_list in guild_upcoming.items():
