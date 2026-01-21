@@ -447,7 +447,7 @@ async def upcoming(interaction: discord.Interaction, ping: str = ""):
     else:
         await interaction.followup.send("📭 No videos within 100K of next million")
 
-# COMMAND 11-19: Milestone & Interval Management (VIDEO URL SUPPORT)
+# COMMAND 11-17: Milestone & Interval Management (VIDEO URL SUPPORT)
 @bot.tree.command(name="setmilestone", description="Video million alerts (URL or ID)")
 @app_commands.describe(url_or_id="YouTube URL or video ID", channel="Alert channel", ping="Optional ping/role")
 async def setmilestone(interaction: discord.Interaction, url_or_id: str, channel: discord.TextChannel, ping: str = ""):
@@ -460,14 +460,6 @@ async def setmilestone(interaction: discord.Interaction, url_or_id: str, channel
                    (video_id, str(interaction.guild.id), f"{channel.id}|{ping}"))
     await safe_response(interaction, f"💿 **Million alerts** → <#{channel.id}> **(every 1M+)** {ping or ''}")
 
-@bot.tree.command(name="setservermilestones", description="Server-wide million alerts")
-@app_commands.describe(channel="Alert channel", ping="Optional ping/role")
-async def setservermilestones(interaction: discord.Interaction, channel: discord.TextChannel, ping: str = ""):
-    ping_str = f"{channel.id}|{ping}"
-    await db_execute("INSERT OR REPLACE INTO server_milestones (guild_id, ping) VALUES (?, ?)",
-                   (str(interaction.guild.id), ping_str))
-    await safe_response(interaction, f"💿 **Server milestones** → <#{channel.id}> {ping or ''}")
-
 @bot.tree.command(name="removemilestones", description="Clear video milestone alerts (URL or ID)")
 @app_commands.describe(url_or_id="YouTube URL or video ID")
 async def removemilestones(interaction: discord.Interaction, url_or_id: str):
@@ -478,11 +470,6 @@ async def removemilestones(interaction: discord.Interaction, url_or_id: str):
     await db_execute("UPDATE milestones SET ping='' WHERE video_id=? AND guild_id=?", 
                    (video_id, str(interaction.guild.id)))
     await safe_response(interaction, "✅ **Video milestone alerts cleared**")
-
-@bot.tree.command(name="clearservermilestones", description="Clear server milestones")
-async def clearservermilestones(interaction: discord.Interaction):
-    await db_execute("DELETE FROM server_milestones WHERE guild_id=?", (str(interaction.guild.id),))
-    await safe_response(interaction, "✅ **Server milestones cleared**")
 
 @bot.tree.command(name="setinterval", description="Set custom interval checks (URL or ID)")
 @app_commands.describe(url_or_id="YouTube URL or video ID", hours="Hours between checks (1/60=1min minimum)")
