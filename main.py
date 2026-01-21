@@ -568,10 +568,10 @@ async def setupcomingmilestonesalert(interaction: discord.Interaction, channel: 
 async def servercheck(interaction: discord.Interaction):
     await interaction.response.defer()
     guild_id = str(interaction.guild.id)
-    videos = await db_execute("SELECT COUNT(*) as count FROM videos WHERE guild_id=?", (guild_id,), fetch=True) or [(0,)]
+    videos = await db_execute("SELECT COUNT(*) as count FROM videos WHERE guild_id=?", (guild_id,), fetch=True) or [({'count': 0},)]
     video_count = videos[0]['count']
     intervals = await db_execute("SELECT COUNT(*) as count FROM intervals i JOIN videos v ON i.video_id=v.video_id WHERE i.hours > 0 AND v.guild_id=?", 
-                               (guild_id,), fetch=True) or [(0,)]
+                               (guild_id,), fetch=True) or [({'count': 0},)]
     interval_count = intervals[0]['count']
     upcoming = await db_execute("SELECT channel_id, ping FROM upcoming_alerts WHERE guild_id=?", (guild_id,), fetch=True) or []
     server_milestones = await db_execute("SELECT ping FROM server_milestones WHERE guild_id=?", (guild_id,), fetch=True) or []
@@ -579,11 +579,15 @@ async def servercheck(interaction: discord.Interaction):
     response = f"**{interaction.guild.name} Overview** 📊\n\n"
     response += f"📹 **Videos**: {video_count} | ⏱️ **Intervals**: {interval_count}\n\n"
     response += "**🔔 Alert Channels:**\n"
+    
+    # FIXED LINE 584:
     if upcoming:
         up_ch = bot.get_channel(int(upcoming[0]['channel_id']))
-        response += f"• **Upcoming**: {up_ch.mention if up_ch else f'<#{upcoming[0]['channel_id']}>'}\n"
+        channel_id = upcoming[0]['channel_id']
+        response += f"• **Upcoming**: {up_ch.mention if up_ch else f'<#{channel_id}>'}\n"
     else:
         response += "• **Upcoming**: Not set\n"
+        
     if server_milestones and server_milestones[0]['ping']:
         sm_ping = server_milestones[0]['ping']
         sm_ch_id, _ = sm_ping.split('|')
@@ -596,7 +600,7 @@ async def servercheck(interaction: discord.Interaction):
     interval_status = "🟢 Running" if interval_checker.is_running() else "🔴 Stopped"
     response += f"\n**🔄 Tasks**: KST: {kst_status} | Intervals: {interval_status}"
     await interaction.followup.send(response)
-
+                               
 # ERROR HANDLER
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
