@@ -274,13 +274,18 @@ async def before_kst_tracker():
 # COMMANDS 1-8: Status + Video Management + Basic Stats
 @bot.tree.command(name="botcheck", description="Bot status and health")
 async def botcheck(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
     now = now_kst()
-    vcount = len(await db_execute("SELECT * FROM videos", fetch=True) or [])
-    icount = len(await db_execute("SELECT * FROM intervals WHERE hours > 0", fetch=True) or [])
+    
+    # FIXED: Guild-specific counts only
+    vcount = len(await db_execute("SELECT * FROM videos WHERE guild_id=?", (guild_id,), fetch=True) or [])
+    icount = len(await db_execute("SELECT * FROM intervals WHERE guild_id=? AND hours > 0", (guild_id,), fetch=True) or [])
+    
     kst_status = "🟢" if kst_tracker.is_running() else "🔴"
     interval_status = "🟢" if interval_checker.is_running() else "🔴"
-    await safe_response(interaction, f"""✅ **KST**: {now.strftime('%Y-%m-%d %H:%M:%S')}
-📊 **{vcount}** videos | **{icount}** intervals
+    
+    await safe_response(interaction, f"""✅ **KST**: {now.strftime('%Y-%m-%d %H:%M:%S')} | **{interaction.guild.name}**
+📊 **{vcount}** videos | **{icount}** intervals 
 🔄 KST: {kst_status} | Intervals: {interval_status}
 💾 DB: Connected | 🌐 PORT: {PORT}""")
 
@@ -468,17 +473,19 @@ async def setinterval(interaction: discord.Interaction, url_or_id: str, hours: f
     guild_id = str(interaction.guild.id)
     await ensure_video_exists(video_id, guild_id)
     
-    # Guild-specific insert
-    await db_execute("INSERT OR REPLACE INTO intervals (video_id, guild_id, hours) VALUES (?, ?, ?)",
+    # Insert interval
+    success = await db_execute("INSERT OR REPLACE INTO intervals (video_id, guild_id, hours) VALUES (?, ?, ?)",
                    (video_id, guild_id, hours))
+    if not success:
+        await safe_response(interaction, "❌ Failed to save interval to database")
+        return
     
-    # Guild-specific count only
+    # FIXED: Count ONLY intervals for this guild (no JOIN needed)
     guild_count = len(await db_execute(
-        "SELECT * FROM intervals i JOIN videos v ON i.video_id=v.video_id WHERE i.hours > 0 AND v.guild_id=?",
+        "SELECT * FROM intervals WHERE guild_id=? AND hours > 0", 
         (guild_id,), fetch=True
     ) or [])
     
-    # FIXED: Single line f-string
     await safe_response(interaction, f"✅ **{hours}hr** interval set! 📊 **{guild_count}** intervals in **{interaction.guild.name}**")
 
 @bot.tree.command(name="disableinterval", description="Stop interval checks (URL or ID)")
