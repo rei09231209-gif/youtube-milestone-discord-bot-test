@@ -467,10 +467,19 @@ async def setinterval(interaction: discord.Interaction, url_or_id: str, hours: f
         return
     guild_id = str(interaction.guild.id)
     await ensure_video_exists(video_id, guild_id)
+    
+    # FIXED: Guild-specific insert
     await db_execute("INSERT OR REPLACE INTO intervals (video_id, guild_id, hours) VALUES (?, ?, ?)",
                    (video_id, guild_id, hours))
-    count = len(await db_execute("SELECT * FROM intervals WHERE hours > 0", fetch=True) or [])
-    await safe_response(interaction, f"✅ **{hours}hr** interval set for guild!\n📊 **{count}** total intervals")
+    
+    # FIXED: Guild-specific count only
+    guild_count = len(await db_execute(
+        "SELECT * FROM intervals i JOIN videos v ON i.video_id=v.video_id WHERE i.hours > 0 AND v.guild_id=?",
+        (guild_id,), fetch=True
+    ) or [])
+    
+    await safe_response(interaction, f"✅ **{hours}hr** interval set!
+📊 **{guild_count}** intervals in **{interaction.guild.name}**")
 
 @bot.tree.command(name="disableinterval", description="Stop interval checks (URL or ID)")
 @app_commands.describe(url_or_id="YouTube URL or video ID")
