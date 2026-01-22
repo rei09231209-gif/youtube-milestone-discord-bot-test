@@ -434,16 +434,21 @@ async def forcecheck(interaction: discord.Interaction):
         return
     results = []
     guild_id = str(interaction.guild.id)
+    now = now_kst()
+    
     for video in videos:
         title, vid = video['title'], video['video_id']
         views, likes = await fetch_video_stats(vid)
         if views:
-            await db_execute("UPDATE intervals SET last_views=?, kst_last_views=?, view_history=? WHERE video_id=? AND guild_id=?", 
-                           (views, views, json.dumps([{"views": views, "time": now_kst().isoformat()}]), vid, guild_id))
-            await check_milestones(vid, title, views, likes, guild_id)
+            # UPDATE intervals table for KST tracker
+            await db_execute(
+                "INSERT OR REPLACE INTO intervals (video_id, guild_id, last_views, kst_last_views, view_history) VALUES (?, ?, ?, ?, ?)",
+                (vid, guild_id, views, views, json.dumps([{"views": views, "time": now.isoformat()}]))
+            )
             results.append(f"📊 **{title}**: {views:,}❤️{likes:,}")
         else:
             results.append(f"❌ **{title}**: fetch failed")
+    
     content = "📊 **Force check results**:\n" + "\n".join(results[:10])
     await interaction.followup.send(content)
 
@@ -456,14 +461,18 @@ async def viewsall(interaction: discord.Interaction):
         return
     guild_id = str(interaction.guild.id)
     results = []
+    
     for video in videos:
         title, vid = video['title'], video['video_id']
         views, likes = await fetch_video_stats(vid)
         if views:
-            await db_execute("UPDATE intervals SET last_views=?, kst_last_views=? WHERE video_id=? AND guild_id=?", 
-                           (views, views, vid, guild_id))
-            await check_milestones(vid, title, views, likes, guild_id)
+            # UPDATE intervals table for KST tracker
+            await db_execute(
+                "INSERT OR REPLACE INTO intervals (video_id, guild_id, last_views, kst_last_views) VALUES (?, ?, ?, ?)",
+                (vid, guild_id, views, views)
+            )
             results.append(f"📊 **{title}**: {views:,}❤️{likes:,}")
+    
     await interaction.followup.send("📊 **Server stats**:\n" + "\n".join(results[:20]))
 
 @bot.tree.command(name="reachedmilestones", description="Videos that hit millions")
