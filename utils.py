@@ -111,18 +111,29 @@ async def fetch_video_stats(video_id):
         return None, None
 
 # FIXED: Proper guild+channel check
-async def ensure_video_exists(video_id, guild_id, title="", ch_id=None, alert_ch=None):
-    """Add video if not exists for this guild+channel"""
+async def ensure_video_exists(video_id, guild_id, title="", alert_channel=None, channel_id=None):
+    """Ensure video exists FOR THIS GUILD with correct channels"""
+    
+    # CHECK THIS GUILD FIRST
     exists = await db_execute(
-        "SELECT 1 FROM videos WHERE video_id=? AND guild_id=? AND channel_id=?",
-        (video_id, guild_id, int(ch_id or 0)), fetch=True
+        "SELECT 1 FROM videos WHERE video_id=? AND guild_id=?", 
+        (video_id, guild_id), 
+        fetch=True
     )
-    if not exists:
-        await db_execute(
-            "INSERT INTO videos (video_id, title, guild_id, channel_id, alert_channel) VALUES (?, ?, ?, ?, ?)",
-            (video_id, title or video_id[:50], guild_id, int(ch_id or 0), int(alert_ch or 0))
-        )
-        print(f"✅ Added video {video_id} to guild {guild_id}")
+    
+    if exists:
+        return  # Already tracked by this guild
+    
+    # FETCH VIDEO TITLE IF NEEDED
+    if not title:
+        # Your existing title fetch logic here
+        title = await fetch_video_title(video_id) or video_id
+    
+    alert_ch = alert_channel or channel_id
+    await db_execute("""
+        INSERT INTO videos (video_id, title, guild_id, alert_channel, channel_id) 
+        VALUES (?, ?, ?, ?, ?)
+    """, (video_id, title, guild_id, alert_ch, channel_id or alert_ch))
 
 async def get_real_growth_rate(video_id, guild_id):
     """Calculate real growth rate from DB history"""
