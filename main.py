@@ -260,6 +260,24 @@ async def check_milestones(vid, title, views, likes, guild_id):
                 (current_million, vid, guild_id)
             )
 
+# Add this at end of interval_checker(), after individual video checks:
+guild_upcoming = {}
+for row in intervals:
+    # ... existing interval logic ...
+    
+    # UPCOMING CHECK (same as kst_tracker)
+    next_m = ((views // 1_000_000) + 1) * 1_000_000
+    diff = next_m - views
+    if 0 < diff <= 100_000:
+        if guild_id not in guild_upcoming:
+            guild_upcoming[guild_id] = []
+        guild_upcoming[guild_id].append(f"⏳ **{title}**: **{diff:,}** to {next_m:,}")
+
+# Send summary (same as kst_tracker)
+for guild_id, upcoming_list in guild_upcoming.items():
+    upcoming_data = await db_execute("SELECT channel_id, ping FROM upcoming_alerts WHERE guild_id=?", (guild_id,), fetch=True)
+    # ... rest of summary logic
+
 # Task startup hooks
 @interval_checker.before_loop
 async def before_interval_checker():
