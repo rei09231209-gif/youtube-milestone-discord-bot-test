@@ -297,7 +297,20 @@ async def addvideo(interaction: discord.Interaction, url_or_id: str, title: str 
         await safe_response(interaction, "❌ Invalid YouTube URL/ID")
         return
     guild_id = str(interaction.guild.id)
-    await ensure_video_exists(video_id, guild_id, title, interaction.channel.id, interaction.channel.id)
+    
+    # CHECK IF EXISTS FOR THIS GUILD FIRST
+    exists = await db_execute("SELECT 1 FROM videos WHERE video_id=? AND guild_id=?", 
+                            (video_id, guild_id), fetch=True)
+    if exists:
+        await safe_response(interaction, "✅ Video already tracked in this server")
+        return
+    
+    # ADD NEW ENTRY FOR THIS GUILD
+    await db_execute("""
+        INSERT INTO videos (video_id, title, guild_id, alert_channel, channel_id) 
+        VALUES (?, ?, ?, ?, ?)
+    """, (video_id, title or video_id, guild_id, interaction.channel.id, interaction.channel.id))
+    
     await safe_response(interaction, f"✅ **{title or video_id}** → <#{interaction.channel.id}>")
 
 @bot.tree.command(name="removevideo", description="Remove video from tracking (URL or ID)")
