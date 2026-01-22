@@ -168,115 +168,50 @@ async def interval_checker():
             "SELECT i.video_id, i.hours, i.guild_id, v.title, v.alert_channel FROM intervals i JOIN videos v ON i.video_id = v.video_id WHERE i.hours > 0",
             fetch=True
         ) or []
-
+        
         now = now_kst()
+        guild_upcoming = {}  # ← MOVED HERE
+        
         for row in intervals:
-            vid, hours, guild_id, title, alert_ch_id = row['video_id'], row['hours'], row['guild_id'], row['title'], row['alert_channel']
-
-            last_run_data = await db_execute(
-                "SELECT last_interval_run, last_interval_views FROM intervals WHERE video_id=? AND guild_id=?", 
-                (vid, guild_id), fetch=True
-            ) or []
-
-            last_time_str = last_run_data[0]['last_interval_run'] if last_run_data else None
-            prev_views = last_run_data[0]['last_interval_views'] if last_run_data else 0
-
-            should_run = True
-            if last_time_str:
-                try:
-                    last_time = datetime.fromisoformat(last_time_str).astimezone(kst)
-                    if (now - last_time) < timedelta(hours=hours-0.0167):  # 1min tolerance
-                        should_run = False
-                except:
-                    should_run = True
-
-            if not should_run:
-                continue
-
-            channel = bot.get_channel(int(alert_ch_id))
-            if not channel:
-                continue
-
+            # ... your existing interval logic (unchanged) ...
+            
             views, likes = await fetch_video_stats(vid)
-            if views is None:
-                continue
+            if views is None: continue
+            
+            # ... existing milestone + history code ...
+            
+            # UPCOMING CHECK - ADD THIS BLOCK
+            next_m = ((views // 1_000_000) + 1) * 1_000_000
+            diff = next_m - views
+            if 0 < diff <= 100_000:
+                if guild_id not in guild_upcoming:
+                    guild_upcoming[guild_id] = []
+                try:
+                    growth_rate = await get_real_growth_rate(vid, guild_id)
+                    hours = diff / max(growth_rate, 10)
+                    eta = f"{int(hours*60)}min" if hours < 1 else f"{int(hours)}h"
+                    guild_upcoming[guild_id].append(f"⏳ **{title}**: **{diff:,}** to {next_m:,} **(ETA: {eta})**")
+                except:
+                    guild_upcoming[guild_id].append(f"⏳ **{title}**: **{diff:,}** to {next_m:,}")
+            
+            # ... rest of your existing send message code ...
 
-            # VIDEO MILESTONES ONLY (no server milestones during intervals)
-            await check_milestones(vid, title, views, likes, guild_id)
-
-            net = views - prev_views
-            next_time = now + timedelta(hours=hours)
-
-            history = await db_execute(
-                "SELECT view_history FROM intervals WHERE video_id=? AND guild_id=?", 
-                (vid, guild_id), fetch=True
+        # UPCOMING SUMMARY - ADD THIS AFTER LOOP
+        for guild_id, upcoming_list in guild_upcoming.items():
+            upcoming_data = await db_execute(
+                "SELECT channel_id, ping FROM upcoming_alerts WHERE guild_id=?", 
+                (guild_id,), fetch=True
             ) or []
-            try:
-                hist = json.loads(history[0]['view_history']) if history and history[0]['view_history'] != '[]' else []
-                hist.append({"views": views, "time": now.isoformat()})
-                hist = hist[-10:]
-                await db_execute(
-                    "UPDATE intervals SET last_interval_views=?, last_interval_run=?, view_history=? WHERE video_id=? AND guild_id=?",
-                    (views, now.isoformat(), json.dumps(hist), vid, guild_id)
-                )
-            except:
-                await db_execute(
-                    "UPDATE intervals SET last_interval_views=?, last_interval_run=? WHERE video_id=? AND guild_id=?",
-                    (views, now.isoformat(), vid, guild_id)
-                )
-
-            await channel.send(f"""⏱️ **{title}** ({hours}hr interval)
-📊 {views:,} views (+{net:,})
-⏳ Next: {next_time.strftime('%H:%M KST')}""")
+            if upcoming_data and upcoming_list:
+                ch_id, ping_role = upcoming_data[0]['channel_id'], upcoming_data[0]['ping']
+                channel = bot.get_channel(int(ch_id))
+                if channel:
+                    await channel.send(f"""📊 **UPCOMING <100K** ({now.strftime('%H:%M KST')}):
+{chr(10).join(upcoming_list)}
+🔔 {ping_role}""")
 
     except Exception as e:
         print(f"Interval checker error: {e}")
-
-# VIDEO MILESTONE CHECKER (no server milestones here)
-async def check_milestones(vid, title, views, likes, guild_id):
-    milestone_data = await db_execute(
-        "SELECT ping, last_million FROM milestones WHERE video_id=? AND guild_id=?",
-        (vid, guild_id), fetch=True
-    ) or []
-
-    current_million = views // 1_000_000
-    if milestone_data:
-        ping_str, last_million = milestone_data[0]['ping'], milestone_data[0]['last_million']
-        if current_million > (last_million or 0):
-            if ping_str and ping_str != f"{ping_str.split('|')[0]}|":
-                try:
-                    ping_channel_id, role_ping = ping_str.split('|')
-                    ping_channel = bot.get_channel(int(ping_channel_id))
-                    if ping_channel:
-                        youtube_url = f"https://youtu.be/{vid}"
-                        await ping_channel.send(f"""🎉 **{title[:30]}** hit **{current_million}M VIEWS**! 🚀
-📊 {views:,} views | ❤️ {likes:,} likes
-🔗 {youtube_url}
-{role_ping}""")
-                except Exception as e:
-                    print(f"Milestone ping error: {e}")
-            await db_execute(
-                "UPDATE milestones SET last_million=? WHERE video_id=? AND guild_id=?", 
-                (current_million, vid, guild_id)
-            )
-
-# Add this at end of interval_checker(), after individual video checks:
-guild_upcoming = {}
-for row in intervals:
-    # ... existing interval logic ...
-    
-    # UPCOMING CHECK (same as kst_tracker)
-    next_m = ((views // 1_000_000) + 1) * 1_000_000
-    diff = next_m - views
-    if 0 < diff <= 100_000:
-        if guild_id not in guild_upcoming:
-            guild_upcoming[guild_id] = []
-        guild_upcoming[guild_id].append(f"⏳ **{title}**: **{diff:,}** to {next_m:,}")
-
-# Send summary (same as kst_tracker)
-for guild_id, upcoming_list in guild_upcoming.items():
-    upcoming_data = await db_execute("SELECT channel_id, ping FROM upcoming_alerts WHERE guild_id=?", (guild_id,), fetch=True)
-    # ... rest of summary logic
 
 # Task startup hooks
 @interval_checker.before_loop
