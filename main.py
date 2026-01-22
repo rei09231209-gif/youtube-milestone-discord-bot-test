@@ -65,6 +65,7 @@ async def safe_response(interaction, content):
 kst = pytz.timezone('Asia/Seoul')
 
 # KST TRACKER (00:00, 12:00, 17:00) - Server milestones ONLY here
+# KST TRACKER (00:00, 12:00, 17:00) - Server milestones ONLY here
 @tasks.loop(minutes=1)
 async def kst_tracker():
     try:
@@ -73,7 +74,15 @@ async def kst_tracker():
             return
 
         print(f"🕐 KST Tracker running at {now.strftime('%H:%M KST')} - Server milestone window")
-        videos = await db_execute("SELECT * FROM videos", fetch=True) or []
+        
+        # FIXED: Guild-specific videos only (THIS WAS THE BUG)
+        guild_ids = [str(guild.id) for guild in bot.guilds if guild]
+        if guild_ids:
+            placeholders = ','.join(['?' for _ in guild_ids])
+            videos = await db_execute(f"SELECT * FROM videos WHERE guild_id IN ({placeholders})", guild_ids, fetch=True) or []
+        else:
+            videos = []
+            
         guild_upcoming = {}
 
         for video in videos:
@@ -119,7 +128,30 @@ async def kst_tracker():
                 )
 
             # VIDEO MILESTONES (always during KST)
-            await check_milestones(video_id, title, views, likes, guild_id)
+            milestone_data = await db_execute(
+                "SELECT ping, last_million FROM milestones WHERE video_id=? AND guild_id=?",
+                (video_id, guild_id), fetch=True
+            ) or []
+            current_million = views // 1_000_000
+            if milestone_data:
+                ping_str, last_million = milestone_data[0]['ping'], milestone_data[0]['last_million']
+                if current_million > (last_million or 0):
+                    if ping_str and ping_str != f"{ping_str.split('|')[0]}|":
+                        try:
+                            ping_channel_id, role_ping = ping_str.split('|')
+                            ping_channel = bot.get_channel(int(ping_channel_id))
+                            if ping_channel:
+                                youtube_url = f"https://youtu.be/{video_id}"
+                                await ping_channel.send(f"""🎉 **{title[:30]}** hit **{current_million}M VIEWS**! 🚀
+📊 {views:,} views | ❤️ {likes:,} likes
+🔗 {youtube_url}
+{role_ping}""")
+                        except Exception as e:
+                            print(f"Milestone ping error: {e}")
+                    await db_execute(
+                        "UPDATE milestones SET last_million=? WHERE video_id=? AND guild_id=?", 
+                        (current_million, video_id, guild_id)
+                    )
 
             # UPCOMING <100K
             next_m = ((views // 1_000_000) + 1) * 1_000_000
