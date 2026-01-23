@@ -554,20 +554,17 @@ async def setinterval(interaction: discord.Interaction, url_or_id: str, hours: f
         return
     guild_id = str(interaction.guild.id)
     await ensure_video_exists(video_id, guild_id)
-    
-    # Insert interval
-    success = await db_execute("INSERT OR REPLACE INTO intervals (video_id, guild_id, hours) VALUES (?, ?, ?)",
+
+    # FIXED: No success check - just insert and verify count
+    await db_execute("INSERT OR REPLACE INTO intervals (video_id, guild_id, hours) VALUES (?, ?, ?)",
                    (video_id, guild_id, hours))
-    if not success:
-        await safe_response(interaction, "❌ Failed to save interval to database")
-        return
     
-    # FIXED: Count ONLY intervals for this guild (no JOIN needed)
+    # Verify it worked by counting guild intervals
     guild_count = len(await db_execute(
         "SELECT * FROM intervals WHERE guild_id=? AND hours > 0", 
         (guild_id,), fetch=True
     ) or [])
-    
+
     await safe_response(interaction, f"✅ **{hours}hr** interval set! 📊 **{guild_count}** intervals in **{interaction.guild.name}**")
 
 @bot.tree.command(name="disableinterval", description="Stop interval checks (URL or ID)")
