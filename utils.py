@@ -5,9 +5,13 @@ import json
 from datetime import datetime, timedelta
 import pytz
 import re
+import time
+import shutil
+import atexit  # Add this import
 
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 DB_PATH = "youtube_bot.db"
+BACKUP_PATH = "backup.db"
 kst = pytz.timezone('Asia/Seoul')
 
 async def init_db():
@@ -18,8 +22,8 @@ async def init_db():
             video_id TEXT UNIQUE,
             title TEXT,
             guild_id TEXT,
-            channel_id INTEGER,      -- FIXED: INTEGER
-            alert_channel INTEGER    -- FIXED: INTEGER
+            channel_id INTEGER,
+            alert_channel INTEGER
         )''')
 
         await db.execute('''CREATE TABLE IF NOT EXISTS intervals (  
@@ -50,7 +54,7 @@ async def init_db():
 
         await db.execute('''CREATE TABLE IF NOT EXISTS upcoming_alerts (  
             guild_id TEXT PRIMARY KEY,  
-            channel_id INTEGER,    -- FIXED: INTEGER
+            channel_id INTEGER,
             ping TEXT DEFAULT ''  
         )''')  
 
@@ -113,27 +117,23 @@ async def fetch_video_stats(video_id):
 # FIXED: Proper guild+channel check
 async def ensure_video_exists(video_id, guild_id, title="", alert_channel=None, channel_id=None):
     """Ensure video exists FOR THIS GUILD with correct channels"""
-    
-    # CHECK THIS GUILD FIRST
     exists = await db_execute(
         "SELECT 1 FROM videos WHERE video_id=? AND guild_id=?", 
         (video_id, guild_id), 
         fetch=True
     )
-    
     if exists:
-        return  # Already tracked by this guild
-    
-    # FETCH VIDEO TITLE IF NEEDED
+        return
+
+    # FETCH VIDEO TITLE IF NEEDED (placeholder - add your fetch_video_title if exists)
     if not title:
-        # Your existing title fetch logic here
-        title = await fetch_video_title(video_id) or video_id
-    
+        title = video_id  # Fallback
+
     alert_ch = alert_channel or channel_id
     await db_execute("""
         INSERT INTO videos (video_id, title, guild_id, alert_channel, channel_id) 
         VALUES (?, ?, ?, ?, ?)
-    """, (video_id, title, guild_id, alert_ch, channel_id or alert_ch))
+    """, (video_id, title, guild_id, alert_ch or 0, channel_id or 0))
 
 async def get_real_growth_rate(video_id, guild_id):
     """Calculate real growth rate from DB history"""
@@ -163,3 +163,25 @@ async def get_real_growth_rate(video_id, guild_id):
     except:
         pass
     return 100
+
+# === NEW DB BACKUP/RESTORE FUNCTIONS ===
+def backup_db():
+    try:
+        if os.path.exists(DB_PATH) and os.path.getsize(DB_PATH) > 1024:
+            shutil.copy2(DB_PATH, BACKUP_PATH)
+            print(f"✅ DB backed up ({os.path.getsize(DB_PATH)/1024:.1f}KB)")
+        else:
+            print("⚠️ DB too small - skipped backup")
+    except Exception as e:
+        print(f"❌ Backup failed: {e}")
+
+def restore_db():
+    try:
+        if os.path.exists(BACKUP_PATH) and os.path.getsize(BACKUP_PATH) > 1024:
+            if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) < 1024:
+                shutil.copy2(BACKUP_PATH, DB_PATH)
+                print(f"✅ Restored DB ({os.path.getsize(BACKUP_PATH)/1024:.1f}KB)")
+                return True
+    except Exception as e:
+        print(f"❌ Restore failed: {e}")
+    return False
