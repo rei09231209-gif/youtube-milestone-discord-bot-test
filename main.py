@@ -716,6 +716,12 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     else:
         await safe_response(interaction, f"❌ **Command failed**: {str(error)}")
 
+# INSERT THIS BLOCK JUST BEFORE LINE 720 (before @bot.event async def on_ready())
+@tasks.loop(hours=1)
+async def hourly_backup():
+    backup_db()
+    print(f"💾 Hourly backup complete - {now_kst().strftime('%H:%M KST')}")
+
 # STARTUP - FIXED
 @bot.event
 async def on_ready():
