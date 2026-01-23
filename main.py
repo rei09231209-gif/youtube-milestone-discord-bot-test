@@ -40,7 +40,11 @@ intents = discord.Intents.default()
 intents.voice_states = False
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Flask Keepalive
+# Flask Keepalive + THREAD START
+from flask import Flask
+from threading import Thread
+import os
+
 app = Flask(__name__)
 @app.route("/")
 @app.route("/health")
@@ -48,7 +52,12 @@ def home():
     return {"status": "alive", "time": now_kst().isoformat()}
 
 def run_flask():
-    app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+
+# CRITICAL: Start Flask in background thread
+Thread(target=run_flask, daemon=True).start()
+print("🌐 Flask keepalive ACTIVE - Render 24/7!")
 
 # Safe response (no ephemeral)
 async def safe_response(interaction, content):
