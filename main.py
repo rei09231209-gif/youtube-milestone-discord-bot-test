@@ -9,42 +9,28 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 import pytz
 import logging
-from utils import *
-import shutil
 import json
 import atexit
 import re
+from utils import *  # Contains: init_db, db_execute, now_kst, backup_db, restore_db
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 PORT = int(os.getenv("PORT", 10000))
-DB_PATH = "youtube_bot.db"
-BACKUP_PATH = os.path.join(os.getcwd(), "backup.db")
-
-# Restore from backup
-if os.path.exists(BACKUP_PATH) and not os.path.exists(DB_PATH):
-    shutil.copy(BACKUP_PATH, DB_PATH)
-    print("✅ Restored DB from backup")
-
-def backup_db():
-    if os.path.exists(DB_PATH):
-        shutil.copy(DB_PATH, BACKUP_PATH)
-        print("✅ DB backed up")
-
-atexit.register(backup_db)
 
 if not BOT_TOKEN:
     raise ValueError("Missing BOT_TOKEN")
+
+# 🚀 PERSISTENT DB - Uses utils.py functions
+restore_db()  # Auto-restore from backup.db
+atexit.register(backup_db)  # Auto-backup on shutdown
+print("💾 DB persistence ACTIVE")
 
 intents = discord.Intents.default()
 intents.voice_states = False
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Flask Keepalive + THREAD START
-from flask import Flask
-from threading import Thread
-import os
-
+# 🌐 FLASK KEEPALIVE (keeps Render awake 24/7)
 app = Flask(__name__)
 @app.route("/")
 @app.route("/health")
@@ -55,21 +41,19 @@ def run_flask():
     port = int(os.environ.get('PORT', 10000))
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
-# CRITICAL: Start Flask in background thread
+# START FLASK FIRST
 Thread(target=run_flask, daemon=True).start()
-print("🌐 Flask keepalive ACTIVE - Render 24/7!")
+print("🌐 Flask ACTIVE - Render stays awake 24/7!")
 
-# Safe response (no ephemeral)
+# Safe response helper
 async def safe_response(interaction, content):
     try:
         if interaction.response.is_done():
             await interaction.followup.send(content)
         else:
             await interaction.response.send_message(content)
-    except discord.NotFound:
+    except:
         pass
-    except Exception as e:
-        print(f"Response error: {e}")
 
 kst = pytz.timezone('Asia/Seoul')
 
@@ -732,11 +716,17 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     else:
         await safe_response(interaction, f"❌ **Command failed**: {str(error)}")
 
-# STARTUP
+# STARTUP - FIXED
 @bot.event
 async def on_ready():
     await init_db()
+    
+    # Start hourly backup task
+    hourly_backup.start()
+    
     print(f"🎉 {bot.user} online - KST: {now_kst().strftime('%H:%M:%S')}")
+    print("💾 DB persistence: utils.py backup/restore ACTIVE")
+    print("🌐 Flask: ACTIVE (Render 24/7)")
 
     try:
         synced = await bot.tree.sync()
@@ -744,12 +734,13 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Sync error: {e}")
 
-    await asyncio.sleep(2)
+    # Start bot tasks
     kst_tracker.start()
     interval_checker.start()
-    Thread(target=run_flask, daemon=True).start()
-    print("🚀 **ALL SYSTEMS GO!** (21 Commands + KST Server Milestones + Multi-Guild)")
+    
+    print("🚀 **ALL SYSTEMS GO!** (21 Commands + KST + Intervals + Multi-Guild + PERSISTENT DB)")
 
+# FINAL START - FIXED (Flask already running from top!)
 if __name__ == "__main__":
-    print(f"🌐 Flask will start after bot ready (port {PORT})")
+    print(f"🤖 Bot starting... (Flask already running on port {PORT})")
     asyncio.run(bot.start(BOT_TOKEN))
