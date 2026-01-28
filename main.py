@@ -522,7 +522,7 @@ async def removemilestones(interaction: discord.Interaction, url_or_id: str):
     hours="Hours between checks (1/60=1min minimum)",
     channel="Channel to send updates (optional)"
 )
-async def setinterval(interaction: discord.Interaction, url_or_id: str, hours: float, channel: Optional[discord.TextChannel] = None):
+async def setinterval(interaction: discord.Interaction, url_or_id: str, hours: float, channel: discord.TextChannel | None = None):
     if hours < 1/60:
         await safe_response(interaction, "❌ **Minimum 1 minute (1/60 hr)**")
         return
@@ -533,16 +533,12 @@ async def setinterval(interaction: discord.Interaction, url_or_id: str, hours: f
     guild_id = str(interaction.guild.id)
     await ensure_video_exists(video_id, guild_id)
 
-    # Use provided channel or current channel
     alert_channel = str(channel.id) if channel else str(interaction.channel.id)
-
-    # FIXED: Store guild_id + alert_channel together!
     await db_execute("""
         INSERT OR REPLACE INTO intervals (video_id, guild_id, hours, alert_channel) 
         VALUES (?, ?, ?, ?)
     """, (video_id, guild_id, hours, alert_channel))
 
-    # Verify it worked
     guild_count = len(await db_execute(
         "SELECT * FROM intervals WHERE guild_id=? AND hours > 0", 
         (guild_id,), fetch=True
