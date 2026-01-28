@@ -16,7 +16,7 @@ kst = pytz.timezone('Asia/Seoul')
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
-        # FIXED: INTEGER columns for Discord channel IDs
+        # Videos table (unchanged)
         await db.execute('''CREATE TABLE IF NOT EXISTS videos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             video_id TEXT UNIQUE,
@@ -26,12 +26,15 @@ async def init_db():
             alert_channel INTEGER
         )''')
 
+        # FIXED intervals - ADDED alert_channel column!
         await db.execute('''CREATE TABLE IF NOT EXISTS intervals (  
             video_id TEXT,  
             guild_id TEXT,  
             hours REAL,  
+            alert_channel INTEGER DEFAULT 0,  -- NEW! Channel ID per guild
             last_interval_views INTEGER DEFAULT 0,  
             last_interval_run TEXT,  
+            last_fixed_run TEXT DEFAULT NULL,  -- For fixed time tracking
             kst_last_views INTEGER DEFAULT 0,  
             kst_last_run TEXT,  
             last_views INTEGER DEFAULT 0,
@@ -56,9 +59,31 @@ async def init_db():
             guild_id TEXT PRIMARY KEY,  
             channel_id INTEGER,
             ping TEXT DEFAULT ''  
-        )''')  
+        )''')
+
+        # CRITICAL: Add missing columns to existing tables (safe)
+        try:
+            await db.execute("ALTER TABLE intervals ADD COLUMN alert_channel INTEGER DEFAULT 0")
+        except aiosqlite.OperationalError:
+            pass  # Column already exists
+        
+        try:
+            await db.execute("ALTER TABLE intervals ADD COLUMN last_fixed_run TEXT DEFAULT NULL")
+        except aiosqlite.OperationalError:
+            pass  # Column already exists
+
+        # BACKFILL: Set alert_channel for existing intervals
+        await db.execute("""
+            UPDATE intervals 
+            SET alert_channel = COALESCE(
+                (SELECT alert_channel FROM videos v WHERE v.video_id = intervals.video_id AND v.guild_id = intervals.guild_id),
+                0
+            )
+            WHERE alert_channel = 0
+        """)
 
         await db.commit()
+        print("✅ Database initialized with multi-server support!")
 
 async def db_execute(query, params=(), fetch=False):
     try:
