@@ -519,45 +519,40 @@ async def removemilestones(interaction: discord.Interaction, url_or_id: str):
 @bot.tree.command(name="setinterval", description="Set custom interval checks (URL or ID)")
 @app_commands.describe(
     url_or_id="YouTube URL or video ID", 
-    hours="Hours between checks (1/60=1min minimum)",
-    channel="Channel to send updates (optional)"
+    hours="Hours between checks (1/60=1min minimum)"
 )
+@app_commands.describe(channel="Channel to send updates (optional - uses current if blank)")
 async def setinterval(interaction: discord.Interaction, url_or_id: str, hours: float, channel: discord.TextChannel | None = None):
     if hours < 1/60:
         await safe_response(interaction, "❌ **Minimum 1 minute (1/60 hr)**")
         return
+        
     video_id = extract_video_id(url_or_id)
     if not video_id:
         await safe_response(interaction, "❌ Invalid URL/ID")
         return
+        
     guild_id = str(interaction.guild.id)
     await ensure_video_exists(video_id, guild_id)
 
-    alert_channel = str(channel.id) if channel else str(interaction.channel.id)
+    # ✅ THIS IS THE MAGIC LINE:
+    alert_channel_id = channel.id if channel else interaction.channel.id
+    
+    print(f"🔍 DEBUG: Using channel ID {alert_channel_id} for {video_id}")
+    
     await db_execute("""
         INSERT OR REPLACE INTO intervals (video_id, guild_id, hours, alert_channel) 
         VALUES (?, ?, ?, ?)
-    """, (video_id, guild_id, hours, alert_channel))
+    """, (video_id, guild_id, hours, alert_channel_id))
 
     guild_count = len(await db_execute(
         "SELECT * FROM intervals WHERE guild_id=? AND hours > 0", 
         (guild_id,), fetch=True
     ) or [])
 
-    channel_mention = f"<#{alert_channel}>" if channel else interaction.channel.mention
+    channel_name = channel.mention if channel else interaction.channel.mention
     await safe_response(interaction, 
-        f"✅ **{hours}hr** interval set in {channel_mention}! 📊 **{guild_count}** intervals in **{interaction.guild.name}**")
-
-@bot.tree.command(name="disableinterval", description="Stop interval checks (URL or ID)")
-@app_commands.describe(url_or_id="YouTube URL or video ID")
-async def disableinterval(interaction: discord.Interaction, url_or_id: str):
-    video_id = extract_video_id(url_or_id)
-    if not video_id:
-        await safe_response(interaction, "❌ Invalid URL/ID")
-        return
-    await db_execute("UPDATE intervals SET hours=0 WHERE video_id=? AND guild_id=?", 
-                   (video_id, str(interaction.guild.id)))
-    await safe_response(interaction, "⏹️ **Interval updates stopped**")
+        f"✅ **{hours}hr** interval set in {channel_name}! 📊 **{guild_count}** total")
 
 @bot.tree.command(name="setupcomingmilestonesalert", description="Auto upcoming <100K alerts")
 @app_commands.describe(channel="Summary channel", ping="Optional ping/role")
