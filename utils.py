@@ -192,21 +192,32 @@ async def get_real_growth_rate(video_id, guild_id):
 # === NEW DB BACKUP/RESTORE FUNCTIONS ===
 def backup_db():
     try:
-        if os.path.exists(DB_PATH) and os.path.getsize(DB_PATH) > 1024:
-            shutil.copy2(DB_PATH, BACKUP_PATH)
-            print(f"✅ DB backed up ({os.path.getsize(DB_PATH)/1024:.1f}KB)")
-        else:
-            print("⚠️ DB too small - skipped backup")
+        if not os.path.exists(DB_PATH):
+            print("⚠️ No database file found - nothing to backup")
+            return False
+            
+        shutil.copy2(DB_PATH, BACKUP_PATH)
+        size_kb = os.path.getsize(DB_PATH) / 1024
+        print(f"✅ DB backed up to {BACKUP_PATH} ({size_kb:.1f}KB)")
+        return True
     except Exception as e:
         print(f"❌ Backup failed: {e}")
+        return False
 
 def restore_db():
     try:
-        if os.path.exists(BACKUP_PATH) and os.path.getsize(BACKUP_PATH) > 1024:
-            if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) < 1024:
-                shutil.copy2(BACKUP_PATH, DB_PATH)
-                print(f"✅ Restored DB ({os.path.getsize(BACKUP_PATH)/1024:.1f}KB)")
-                return True
+        if not os.path.exists(BACKUP_PATH):
+            print("⚠️ No backup file found")
+            return False
+            
+        if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) < 512:
+            shutil.copy2(BACKUP_PATH, DB_PATH)
+            size_kb = os.path.getsize(BACKUP_PATH) / 1024
+            print(f"✅ Restored DB from backup ({size_kb:.1f}KB)")
+            return True
+        else:
+            print("⚠️ Live DB exists and is valid - restore skipped")
+            return False
     except Exception as e:
         print(f"❌ Restore failed: {e}")
-    return False
+        return False
