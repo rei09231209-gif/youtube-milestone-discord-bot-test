@@ -454,14 +454,15 @@ async def reachedmilestones(interaction: discord.Interaction):
     else:
         await interaction.followup.send("💿 **Million Milestones Reached**:\n" + "\n".join(f"• **{t['title']}**: {t['last_million']}M" for t in data))
 
-@bot.tree.command(name="upcoming", description="Upcoming milestones (<100K to next million)")
-@app_commands.describe(ping="Optional ping/role")
-async def upcoming(interaction: discord.Interaction, ping: str = ""):
+@bot.tree.command(name="upcoming", description="Upcoming milestones <100K (paginated)")
+async def upcoming(interaction: discord.Interaction):
     await interaction.response.defer()
     guild_id = str(interaction.guild.id)
     videos = await db_execute("SELECT title, video_id FROM videos WHERE guild_id=?", (guild_id,), fetch=True) or []
-    lines = []
+    
+    upcoming_videos = []
     now = now_kst()
+    
     for video in videos:
         title, vid = video['title'], video['video_id']
         views, _ = await fetch_video_stats(vid)
@@ -471,25 +472,30 @@ async def upcoming(interaction: discord.Interaction, ping: str = ""):
             if 0 < diff <= 100_000:
                 try:
                     growth_rate = await get_real_growth_rate(vid, guild_id)
-                    hours = (next_m - views) / max(growth_rate, 10)
-                    if hours < 1:
-                        eta = f"{int(hours*60)}min"
-                    elif hours < 24:
-                        eta = f"{int(hours)}h"
-                    elif hours < 168:
-                        eta = f"{int(hours/24)}d"
-                    else:
-                        eta = f"{int(hours/24/7)}w"
-                    lines.append(f"⏳ **{title}**: **{diff:,}** to {next_m:,} **(ETA: {eta})**")
+                    hours = diff / max(growth_rate, 10)
+                    if hours < 1: eta = f"{int(hours*60)}min"
+                    elif hours < 24: eta = f"{int(hours)}h"
+                    elif hours < 168: eta = f"{int(hours/24)}d"
+                    else: eta = f"{int(hours/24/7)}w"
+                    upcoming_videos.append(f"⏳ **{title[:35]}**: **{diff:,}** to {next_m:,} **(ETA: {eta})**")
                 except:
-                    lines.append(f"⏳ **{title}**: **{diff:,}** to {next_m:,}")
-    if lines:
-        msg = f"""📊 **UPCOMING <100K** ({now.strftime('%H:%M KST')}):
-{chr(10).join(lines)}
-🔔 {ping}"""
-        await interaction.followup.send(msg)
-    else:
+                    upcoming_videos.append(f"⏳ **{title[:35]}**: **{diff:,}** to {next_m:,}")
+
+    if not upcoming_videos:
         await interaction.followup.send("📭 No videos within 100K of next million")
+        return
+    
+    page_size = 10
+    pages = []
+    for i in range(0, len(upcoming_videos), page_size):
+        page_videos = upcoming_videos[i:i+page_size]
+        page_content = f"""📊 **UPCOMING <100K** ({now.strftime('%H:%M KST')})
+Page {i//page_size + 1}/{((len(upcoming_videos)-1)//page_size)+1}
+
+{chr(10).join(page_videos)}"""
+        pages.append(page_content)
+    
+    await start_paginator(interaction, pages)
 
 @bot.tree.command(name="setmilestone", description="Video million alerts")
 @app_commands.describe(url_or_id="YouTube URL or video ID", channel="Alert channel (optional: uses current)", ping="Optional ping/role")
@@ -560,6 +566,31 @@ async def setupcomingmilestonesalert(interaction: discord.Interaction, channel: 
     await db_execute("INSERT OR REPLACE INTO upcoming_alerts (guild_id, channel_id, ping) VALUES (?, ?, ?)",
                    (str(interaction.guild.id), channel.id, ping))
     await safe_response(interaction, f"📢 **Upcoming <100K alerts** → <#{channel.id}> **(KST 3x/day + Intervals)**")
+
+@bot.tree.command(name="listintervals", description="List all active server intervals (paginated)")
+async def listintervals(interaction: discord.Interaction):
+    guild_id = str(interaction.guild.id)
+    intervals = await db_execute("""
+        SELECT i.video_id, i.hours, v.title FROM intervals i 
+        JOIN videos v ON i.video_id = v.video_id AND i.guild_id = v.guild_id
+        WHERE i.hours > 0 AND i.guild_id=?
+    """, (guild_id,), fetch=True) or []
+    
+    if not intervals:
+        await safe_response(interaction, "📭 **No active intervals**")
+        return
+    
+    page_size = 10
+    pages = []
+    for i in range(0, len(intervals), page_size):
+        page_intervals = intervals[i:i+page_size]
+        page_content = f"⏱️ **Active Intervals** (Page {i//page_size + 1}/{((len(intervals)-1)//page_size)+1})\n\n" + "\n".join(
+            f"• **{intv['title'][:30]}**: `{intv['hours']}hr` ({intv['video_id']})" 
+            for intv in page_intervals
+        )
+        pages.append(page_content)
+    
+    await start_paginator(interaction, pages)
 
 @bot.tree.command(name="checkintervals", description="Force check ALL intervals NOW")
 async def checkintervals(interaction: discord.Interaction):
@@ -680,6 +711,50 @@ async def servercheck(interaction: discord.Interaction):
     interval_status = "🟢 Running" if interval_checker.is_running() else "🔴 Stopped"
     response += f"\n**🔄 Tasks**: KST: {kst_status} | Intervals: {interval_status}"
     await interaction.followup.send(response)
+
+@bot.tree.command(name="help", description="All 21 YouTube Tracker Commands")
+async def help_cmd(interaction: discord.Interaction):
+    content = """📋 **21 YOUTUBE TRACKER COMMANDS** (Plain Text)
+
+📹 **VIDEO MANAGEMENT (4)**
+• `/addvideo <URL/ID> [title]` - Add video to track
+• `/removevideo <URL/ID>` - Remove from server
+• `/listvideos` - Videos in this channel **(PAGINATED)**
+• `/serverlist` - All server videos **(PAGINATED)**
+
+🔄 **LIVE CHECKS (5)**
+• `/views <URL/ID>` - Single video stats
+• `/forcecheck` - Check channel videos NOW
+• `/viewsall` - ALL server stats **(PAGINATED)**
+• `/checkintervals` - Force intervals NOW
+• `/listintervals` - Active intervals **(PAGINATED)**
+
+⏱️ **INTERVALS (4)**
+• `/setinterval <URL/ID> <hours>` - Custom intervals (1/60hr min)
+• `/disableinterval <URL/ID>` - Stop intervals
+• `/setupcomingmilestonesalert <#ch> [ping]` - <100K alerts setup
+
+🎯 **MILESTONES (5)**
+• `/setmilestone <URL/ID> <#ch> [ping]` - Video million alerts
+• `/setservermilestone <#ch> [ping]` - **SERVER-WIDE** KST alerts
+• `/removemilestones <URL/ID>` - Clear video alerts
+• `/clearservmilestone` - Clear server alerts
+• `/upcoming` - <100K to million **(PAGINATED)**
+• `/reachedmilestones` - Videos that hit millions
+
+📊 **STATUS (3)**
+• `/botcheck` - Bot health + KST time
+• `/servercheck` - Server overview
+• `/help` - This help
+
+🔥 **AUTO-TRACKERS**:
+• **KST**: 00:00/12:00/17:00 **(Server milestones + <100K)**
+• **INTERVALS**: Custom hours (video + milestones + <100K)
+• **PERSISTENT**: DB backup/restore 24/7
+
+💾 **utils.py**: init_db, now_kst, backup_db ✅"""
+    
+    await safe_response(interaction, content)
 
 # ERROR HANDLER
 @bot.tree.error
